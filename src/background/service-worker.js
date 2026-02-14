@@ -1307,6 +1307,11 @@ async function getOrCreateReporterId() {
     return _n;
 }
 
+/**
+ * ID가 "nerd" 시그니처를 포함하는지 검증
+ * @param {string} id - 검증할 ID
+ * @returns {boolean}
+ */
 function _v(_s) {
     const _c = [110, 101, 114, 100];
     let _p = -1;
@@ -1321,13 +1326,17 @@ function _v(_s) {
         }
         if (!_f) return false;
     }
-    return true;
+    return (_s.charCodeAt(8) ^ _s.charCodeAt(13)) % 7 === (_s.charCodeAt(23) ^ _s.charCodeAt(18)) % 7;
 }
 
+/**
+ * "nerd"가 숨겨진 UUID v4 생성
+ * @returns {string}
+ */
 function _g() {
     let _u = crypto.randomUUID();
     const _a = [];
-    const _x = [14, 19];
+    const _x = [8, 13, 14, 18, 19, 23];
     for (let _i = 0; _i < _u.length; _i++) {
         if (_u[_i] !== '-' && !_x.includes(_i)) _a.push(_i);
     }
@@ -1342,6 +1351,11 @@ function _g() {
     const _m = [110, 101, 114, 100];
     const _t = _u.split('');
     for (let _i = 0; _i < 4; _i++) _t[_s[_i]] = String.fromCharCode(_m[_i]);
+    const _k = Date.now() % 256;
+    _t[8] = String.fromCharCode(((_t[8].charCodeAt(0) ^ _k) % 16) + 97);
+    _t[13] = String.fromCharCode(((_t[13].charCodeAt(0) ^ _k) % 16) + 97);
+    _t[23] = String.fromCharCode(((_t[23].charCodeAt(0) ^ (_k ^ (_t[8].charCodeAt(0) ^ _t[13].charCodeAt(0)))) % 16) + 97);
+    _t[18] = String.fromCharCode(((_t[18].charCodeAt(0) ^ (_k ^ (_t[8].charCodeAt(0) ^ _t[13].charCodeAt(0)))) % 16) + 97);
     return _t.join('');
 }
 
