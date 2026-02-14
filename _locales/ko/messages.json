@@ -1,0 +1,110 @@
+{
+    "extName": {
+        "message": "카-스 프리",
+        "description": "확장 프로그램 이름"
+    },
+    "extDescription": {
+        "message": "디시인사이드에서 혐오 이미지를 사전에 감지하여 안구를 보호합니다.",
+        "description": "확장 프로그램 설명"
+    },
+    "signalSafe": {
+        "message": "안전",
+        "description": "안전한 게시글"
+    },
+    "signalCaution": {
+        "message": "주의",
+        "description": "주의가 필요한 게시글"
+    },
+    "signalDanger": {
+        "message": "위험",
+        "description": "위험한 게시글"
+    },
+    "signalUnchecked": {
+        "message": "미검사",
+        "description": "검사 전 또는 이미지 없음"
+    },
+    "signalLoading": {
+        "message": "검사 중...",
+        "description": "이미지 분석 중"
+    },
+    "signalError": {
+        "message": "검사 실패",
+        "description": "분석 중 오류 발생"
+    },
+    "popupTitle": {
+        "message": "카-스 프리",
+        "description": "팝업 제목"
+    },
+    "popupStatsToday": {
+        "message": "오늘의 통계",
+        "description": "오늘 통계 제목"
+    },
+    "popupStatsScanned": {
+        "message": "검사",
+        "description": "검사한 게시글 수"
+    },
+    "popupApiStatus": {
+        "message": "API 상태",
+        "description": "API 연결 상태"
+    },
+    "popupSettings": {
+        "message": "설정",
+        "description": "설정 버튼"
+    },
+    "optionsTitle": {
+        "message": "카-스 프리 설정",
+        "description": "설정 페이지 제목"
+    },
+    "optionsApiSettings": {
+        "message": "2차 검증 API 설정",
+        "description": "API 설정 섹션"
+    },
+    "optionsSensitivity": {
+        "message": "위험도 판정 기준",
+        "description": "민감도 설정 섹션"
+    },
+    "optionsBehavior": {
+        "message": "동작 설정",
+        "description": "동작 설정 섹션"
+    },
+    "optionsSave": {
+        "message": "저장",
+        "description": "저장 버튼"
+    },
+    "optionsSaved": {
+        "message": "설정이 저장되었습니다.",
+        "description": "저장 완료 메시지"
+    },
+    "errorApiKey": {
+        "message": "API 키를 확인해주세요.",
+        "description": "API 키 오류"
+    },
+    "errorNetwork": {
+        "message": "네트워크 오류가 발생했습니다.",
+        "description": "네트워크 오류"
+    },
+    "errorTimeout": {
+        "message": "요청 시간이 초과되었습니다.",
+        "description": "타임아웃 오류"
+    },
+    "tooltipGoreViolence": {
+        "message": "혐오/폭력",
+        "description": "혐오/폭력 카테고리"
+    },
+    "tooltipDisturbing": {
+        "message": "불쾌",
+        "description": "불쾌 카테고리"
+    },
+    "tooltipPorn": {
+        "message": "음란",
+        "description": "음란 카테고리"
+    },
+    "tooltipHentai": {
+        "message": "성인 애니",
+        "description": "헨타이 카테고리"
+    },
+    "tooltipSexy": {
+        "message": "선정적",
+        "description": "선정적 카테고리"
+    }
+}
