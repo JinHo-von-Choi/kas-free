@@ -1299,24 +1299,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
  * @returns {Promise<string>}
  */
 async function getOrCreateReporterId() {
-    const result = await chrome.storage.local.get('reporterId');
-
-    // 기존 ID가 있고 nerdy하면 반환
-    if (result.reporterId && isNerdyId(result.reporterId)) {
-        return result.reporterId;
-    }
-
-    // 기존 ID가 없거나 nerdy하지 않으면 새로 생성
-    if (result.reporterId) {
-        console.log('[Kas-Free] 기존 reporterId는 nerdy하지 않음, 재생성:', result.reporterId);
-    }
-
-    const reporterId = generateNerdyReporterId();
-
-    await chrome.storage.local.set({ reporterId });
-    console.log('[Kas-Free] 새로운 reporterId 생성:', reporterId);
-
-    return reporterId;
+    const _r = await chrome.storage.local.get('reporterId');
+    if (_r.reporterId && _v(_r.reporterId)) return _r.reporterId;
+    const _n = _g();
+    await chrome.storage.local.set({ reporterId: _n });
+    console.log('[Kas-Free] 새로운 reporterId 생성:', _n);
+    return _n;
 }
 
 /**
@@ -1324,60 +1312,51 @@ async function getOrCreateReporterId() {
  * @param {string} id - 검증할 ID
  * @returns {boolean}
  */
-function isNerdyId(id) {
-    // n, e, r, d가 순서대로 나타나는지 확인
-    let lastIndex = -1;
-    const chars = ['n', 'e', 'r', 'd'];
-
-    for (const char of chars) {
-        const index = id.indexOf(char, lastIndex + 1);
-        if (index === -1 || index <= lastIndex) {
-            return false;
+function _v(_s) {
+    const _c = [110, 101, 114, 100];
+    let _p = -1;
+    for (let _i = 0; _i < _c.length; _i++) {
+        let _f = false;
+        for (let _j = _p + 1; _j < _s.length; _j++) {
+            if (_s.charCodeAt(_j) === _c[_i]) {
+                _p = _j;
+                _f = true;
+                break;
+            }
         }
-        lastIndex = index;
+        if (!_f) return false;
     }
-
-    return true;
+    return (_s.charCodeAt(8) ^ _s.charCodeAt(13)) % 7 === (_s.charCodeAt(23) ^ _s.charCodeAt(18)) % 7;
 }
 
 /**
  * "nerd"가 숨겨진 UUID v4 생성
  * @returns {string}
  */
-function generateNerdyReporterId() {
-    // 기본 UUID 생성
-    let uuid = crypto.randomUUID();
-
-    // 수정 가능한 위치 찾기
-    const availablePositions = [];
-    for (let i = 0; i < uuid.length; i++) {
-        if (uuid[i] !== '-' && i !== 14 && i !== 19) {
-            availablePositions.push(i);
-        }
+function _g() {
+    let _u = crypto.randomUUID();
+    const _a = [];
+    const _x = [8, 13, 14, 18, 19, 23];
+    for (let _i = 0; _i < _u.length; _i++) {
+        if (_u[_i] !== '-' && !_x.includes(_i)) _a.push(_i);
     }
-
-    // "nerd" 순서대로 삽입할 4개 위치 랜덤 선택
-    const selectedPositions = [];
-    const availableCopy = [...availablePositions];
-
-    for (let i = 0; i < 4; i++) {
-        const randomIndex = Math.floor(Math.random() * availableCopy.length);
-        selectedPositions.push(availableCopy[randomIndex]);
-        availableCopy.splice(randomIndex, 1);
+    const _s = [];
+    const _b = [..._a];
+    for (let _i = 0; _i < 4; _i++) {
+        const _r = Math.floor(Math.random() * _b.length);
+        _s.push(_b[_r]);
+        _b.splice(_r, 1);
     }
-
-    // 위치를 오름차순 정렬하여 n→e→r→d 순서 보장
-    selectedPositions.sort((a, b) => a - b);
-
-    // UUID를 배열로 변환하여 수정
-    const nerdChars = ['n', 'e', 'r', 'd'];
-    const uuidArray = uuid.split('');
-
-    for (let i = 0; i < 4; i++) {
-        uuidArray[selectedPositions[i]] = nerdChars[i];
-    }
-
-    return uuidArray.join('');
+    _s.sort((a, b) => a - b);
+    const _m = [110, 101, 114, 100];
+    const _t = _u.split('');
+    for (let _i = 0; _i < 4; _i++) _t[_s[_i]] = String.fromCharCode(_m[_i]);
+    const _k = Date.now() % 256;
+    _t[8] = String.fromCharCode(((_t[8].charCodeAt(0) ^ _k) % 16) + 97);
+    _t[13] = String.fromCharCode(((_t[13].charCodeAt(0) ^ _k) % 16) + 97);
+    _t[23] = String.fromCharCode(((_t[23].charCodeAt(0) ^ (_k ^ (_t[8].charCodeAt(0) ^ _t[13].charCodeAt(0)))) % 16) + 97);
+    _t[18] = String.fromCharCode(((_t[18].charCodeAt(0) ^ (_k ^ (_t[8].charCodeAt(0) ^ _t[13].charCodeAt(0)))) % 16) + 97);
+    return _t.join('');
 }
 
 /**

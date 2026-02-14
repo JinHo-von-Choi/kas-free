@@ -628,6 +628,14 @@ chrome.runtime.sendMessage(
 - [OpenAI CLIP](https://github.com/openai/CLIP) - 이미지 임베딩 모델
 - Google AI Studio, Anthropic, OpenAI - AI API 제공
 
+## 개인정보 처리 방침
+
+카-스 프리는 사용자 개인정보 보호를 최우선으로 합니다:
+- **수집 정보**: 이미지 URL, 분석 결과, 사용자 설정 (모두 로컬 저장)
+- **서버 전송**: 이미지 해시값, 신고/화이트리스트 요청 시 이미지 URL
+- **API 키**: 로컬 저장만 수행, 외부 전송 안 함
+- **상세 정책**: [https://nsfw.nerdvana.kr/privacy](https://nsfw.nerdvana.kr/privacy)
+
 ## 라이선스
 
 MIT License - 자유롭게 사용, 수정, 배포 가능합니다.
