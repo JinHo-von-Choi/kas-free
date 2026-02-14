@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+    <defs>
+        <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:#3b82f6"/>
+            <stop offset="100%" style="stop-color:#1d4ed8"/>
+        </linearGradient>
+    </defs>
+    <!-- )( �� -->
+    <path d="M64 8 L112 24 L112 56 C112 88 88 112 64 120 C40 112 16 88 16 56 L16 24 Z" 
+          fill="url(#shieldGrad)" 
+          stroke="#1e40af" 
+          stroke-width="2"/>
+    <!--  �8 DtX -->
+    <ellipse cx="64" cy="56" rx="28" ry="18" fill="none" stroke="white" stroke-width="4"/>
+    <circle cx="64" cy="56" r="10" fill="white"/>
+    <circle cx="64" cy="56" r="5" fill="#1d4ed8"/>
+    <!-- �l �l -->
+    <path d="M48 80 L58 90 L80 68" 
+          fill="none" 
+          stroke="#22c55e" 
+          stroke-width="6" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+</svg>

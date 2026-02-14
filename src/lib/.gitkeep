@@ -1,0 +1,9 @@
+# 외부 라이브러리 파일 위치
+#
+# 필요한 파일:
+# - tf.min.js (TensorFlow.js)
+# - nsfwjs.min.js (NSFW.js)
+#
+# 다운로드:
+# TensorFlow.js: https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js
+# NSFW.js: https://cdn.jsdelivr.net/npm/nsfwjs/dist/nsfwjs.min.js

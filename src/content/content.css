@@ -1,0 +1,406 @@
+/**
+ * 카-스 프리 Content Script 스타일
+ * @author 최진호
+ * @date 2026-01-31
+ * @version 1.0.0
+ */
+
+/** 신호등 컨테이너 */
+.kas-signal-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+/** 신호등 기본 스타일 */
+.kas-signal {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    font-size: 10px;
+    line-height: 1;
+    vertical-align: middle;
+    cursor: help;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    flex-shrink: 0;
+    position: relative;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.kas-signal::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 3px;
+    width: 6px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 50%;
+    filter: blur(1px);
+}
+
+.kas-signal:hover {
+    transform: scale(1.2);
+    filter: brightness(1.1);
+}
+
+/** 안전 (초록) */
+.kas-signal--safe {
+    background: radial-gradient(circle at 30% 30%, #4ade80, #22c55e 45%, #16a34a);
+    box-shadow:
+        0 0 4px rgba(34, 197, 94, 0.6),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+        inset 0 2px 2px rgba(255, 255, 255, 0.3);
+}
+
+/** 주의 (노란) */
+.kas-signal--caution {
+    background: radial-gradient(circle at 30% 30%, #fde047, #eab308 45%, #ca8a04);
+    box-shadow:
+        0 0 4px rgba(234, 179, 8, 0.6),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+        inset 0 2px 2px rgba(255, 255, 255, 0.3);
+}
+
+/** 위험 (빨강) */
+.kas-signal--danger {
+    background: radial-gradient(circle at 30% 30%, #f87171, #ef4444 45%, #dc2626);
+    box-shadow:
+        0 0 4px rgba(239, 68, 68, 0.6),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+        inset 0 2px 2px rgba(255, 255, 255, 0.3);
+    animation: kas-pulse 1.5s ease-in-out infinite;
+}
+
+/** 미검사 (회색) */
+.kas-signal--unchecked {
+    background: radial-gradient(circle at 30% 30%, #d1d5db, #9ca3af 45%, #6b7280);
+    box-shadow:
+        0 0 4px rgba(156, 163, 175, 0.4),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+        inset 0 2px 2px rgba(255, 255, 255, 0.3);
+}
+
+/** 로딩 (파란) */
+.kas-signal--loading {
+    background: radial-gradient(circle at 30% 30%, #60a5fa, #3b82f6 45%, #2563eb);
+    box-shadow:
+        0 0 4px rgba(59, 130, 246, 0.6),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+        inset 0 2px 2px rgba(255, 255, 255, 0.3);
+    animation: kas-spin 1s linear infinite;
+}
+
+/** 에러 (주황) */
+.kas-signal--error {
+    background: radial-gradient(circle at 30% 30%, #fb923c, #f97316 45%, #ea580c);
+    box-shadow:
+        0 0 4px rgba(249, 115, 22, 0.6),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+        inset 0 2px 2px rgba(255, 255, 255, 0.3);
+}
+
+/** 애니메이션: 펄스 */
+@keyframes kas-pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.7;
+        transform: scale(0.95);
+    }
+}
+
+/** 애니메이션: 회전 (로딩) */
+@keyframes kas-spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/** AI 체크 버튼 */
+.kas-ai-check-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    position: relative;
+    z-index: 10;
+    pointer-events: auto;
+}
+
+.kas-ai-check-btn:hover {
+    transform: scale(1.15);
+    box-shadow: 0 2px 6px rgba(102, 126, 234, 0.4);
+    filter: brightness(1.1);
+    z-index: 11;
+}
+
+.kas-ai-check-btn:active {
+    transform: scale(0.95);
+}
+
+.kas-ai-check-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    filter: grayscale(0.5);
+    pointer-events: none;
+}
+
+/** 툴팁 컨테이너 */
+.kas-tooltip {
+    position: absolute;
+    z-index: 10000;
+    padding: 8px 12px;
+    background-color: #1f2937;
+    color: #f9fafb;
+    font-size: 12px;
+    line-height: 1.5;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.kas-tooltip--visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.kas-tooltip::before {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 6px 6px 0 6px;
+    border-style: solid;
+    border-color: #1f2937 transparent transparent transparent;
+}
+
+/** 툴팁 내용 */
+.kas-tooltip__title {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.kas-tooltip__detail {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.kas-tooltip__item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.kas-tooltip__label {
+    color: #9ca3af;
+}
+
+.kas-tooltip__value {
+    font-weight: 500;
+}
+
+.kas-tooltip__value--high {
+    color: #ef4444;
+}
+
+.kas-tooltip__value--medium {
+    color: #eab308;
+}
+
+.kas-tooltip__value--low {
+    color: #22c55e;
+}
+
+/** 위험 게시글 자동 숨김 */
+.kas-hidden {
+    display: none !important;
+}
+
+/** 위험 게시글 흐림 효과 (선택적) */
+.kas-blurred {
+    opacity: 0.3;
+    filter: blur(2px);
+    transition: opacity 0.3s ease, filter 0.3s ease;
+}
+
+.kas-blurred:hover {
+    opacity: 1;
+    filter: none;
+}
+
+/** 제목 셀 내 정렬 보정 */
+td.gall_tit a {
+    display: inline-flex;
+    align-items: center;
+}
+
+/** 디시인사이드 기존 스타일과 충돌 방지 */
+.gall_list .kas-signal {
+    position: relative;
+    top: 0;
+}
+
+/** 프리뷰 툴팁 컨테이너 */
+.kas-preview-tooltip {
+    position: absolute;
+    z-index: 9999;
+    padding: 12px 16px;
+    background-color: #ffffff;
+    color: #1f2937;
+    font-size: 13px;
+    line-height: 1.6;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    border: 1px solid #e5e7eb;
+    max-width: 400px;
+    min-width: 300px;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.kas-preview-tooltip--visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/** 프리뷰 툴팁 제목 */
+.kas-preview-tooltip__title {
+    font-weight: 600;
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/** 프리뷰 툴팁 내용 */
+.kas-preview-tooltip__content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/** 프리뷰 본문 텍스트 */
+.kas-preview-tooltip__text {
+    color: #374151;
+    line-height: 1.5;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+/** 프리뷰 이미지 정보 */
+.kas-preview-tooltip__images {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 8px;
+    margin-top: 8px;
+    border-top: 1px solid #e5e7eb;
+    font-size: 12px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+/** AI 검증 결과 */
+.kas-preview-tooltip__ai {
+    padding-top: 12px;
+    margin-top: 12px;
+    border-top: 2px solid #e5e7eb;
+}
+
+.kas-preview-tooltip__ai-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.kas-preview-tooltip__ai-status {
+    font-size: 13px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 6px;
+}
+
+.kas-preview-tooltip__ai-reason {
+    font-size: 12px;
+    color: #6b7280;
+    line-height: 1.5;
+    font-style: italic;
+}
+
+/** 대체된 이미지 스타일 (너굴맨) */
+.kas-replaced-image {
+    max-width: 450px;
+    max-height: 450px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border: 3px solid #ef4444;
+    border-radius: 8px;
+    padding: 4px;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.05), rgba(249, 115, 22, 0.05));
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.3);
+    cursor: context-menu;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.kas-replaced-image:hover {
+    border-color: #dc2626;
+    box-shadow: 0 0 24px rgba(239, 68, 68, 0.5);
+    transform: scale(1.02);
+}
+
+/** 대체된 이미지 경고 배지 */
+.kas-replaced-image::after {
+    content: '⚠️ 우클릭 → 원본 이미지 보기';
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    padding: 6px 12px;
+    background: rgba(239, 68, 68, 0.95);
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.kas-replaced-image:hover::after {
+    opacity: 1;
+}

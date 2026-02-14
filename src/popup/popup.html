@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>카-스 프리</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="popup">
+        <!-- 헤더 -->
+        <header class="popup__header">
+            <div class="popup__logo">
+                <img src="../../icons/icon48.png" alt="로고" width="24" height="24">
+                <div class="popup__title-wrapper">
+                    <h1 class="popup__title">카-스 프리</h1>
+                    <span class="popup__version" id="popupVersion">v1.0.0</span>
+                </div>
+            </div>
+            <div class="popup__toggle">
+                <label class="toggle">
+                    <input type="checkbox" id="toggleEnabled" checked>
+                    <span class="toggle__slider"></span>
+                </label>
+            </div>
+        </header>
+
+        <!-- 통계 섹션 -->
+        <section class="popup__section">
+            <h2 class="popup__section-title">오늘의 통계</h2>
+            <div class="stats">
+                <div class="stats__item">
+                    <span class="stats__label">검사</span>
+                    <span class="stats__value" id="statsScanned">0</span>
+                    <span class="stats__unit">건</span>
+                </div>
+                <div class="stats__row">
+                    <div class="stats__item stats__item--safe">
+                        <span class="stats__dot stats__dot--safe"></span>
+                        <span class="stats__label">안전</span>
+                        <span class="stats__value" id="statsSafe">0</span>
+                    </div>
+                    <div class="stats__item stats__item--caution">
+                        <span class="stats__dot stats__dot--caution"></span>
+                        <span class="stats__label">주의</span>
+                        <span class="stats__value" id="statsCaution">0</span>
+                    </div>
+                    <div class="stats__item stats__item--danger">
+                        <span class="stats__dot stats__dot--danger"></span>
+                        <span class="stats__label">위험</span>
+                        <span class="stats__value" id="statsDanger">0</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- API 상태 섹션 -->
+        <section class="popup__section">
+            <h2 class="popup__section-title">API 상태</h2>
+            <div class="api-status">
+                <div class="api-status__item">
+                    <span class="api-status__name">Kas-Free 데이터베이스</span>
+                    <span class="api-status__indicator" id="apiNsfwjs" data-status="checking"></span>
+                </div>
+                <div class="api-status__item">
+                    <span class="api-status__name">Gemini Flash</span>
+                    <span class="api-status__indicator" id="apiGeminiFlash" data-status="unconfigured"></span>
+                </div>
+                <div class="api-status__item">
+                    <span class="api-status__name">Claude Haiku</span>
+                    <span class="api-status__indicator" id="apiClaudeHaiku" data-status="unconfigured"></span>
+                </div>
+                <div class="api-status__item">
+                    <span class="api-status__name">GPT-4o-mini</span>
+                    <span class="api-status__indicator" id="apiGpt4oMini" data-status="unconfigured"></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 설정 버튼 -->
+        <footer class="popup__footer">
+            <button class="btn btn--settings" id="btnSettings">
+                <svg class="btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+                설정
+            </button>
+        </footer>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

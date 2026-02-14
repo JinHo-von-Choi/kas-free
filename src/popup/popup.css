@@ -1,0 +1,281 @@
+/**
+ * 카-스 프리 팝업 스타일
+ * @author 최진호
+ * @date 2026-01-31
+ * @version 1.0.0
+ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #1f2937;
+    background-color: #ffffff;
+}
+
+.popup {
+    width: 280px;
+    padding: 16px;
+}
+
+/** 헤더 */
+.popup__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 16px;
+}
+
+.popup__logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.popup__title-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.popup__title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #111827;
+    line-height: 1;
+}
+
+.popup__version {
+    font-size: 11px;
+    color: #9ca3af;
+    font-weight: 400;
+}
+
+/** 토글 스위치 */
+.toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle__slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #d1d5db;
+    border-radius: 24px;
+    transition: background-color 0.3s ease;
+}
+
+.toggle__slider::before {
+    position: absolute;
+    content: '';
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.3s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle input:checked + .toggle__slider {
+    background-color: #22c55e;
+}
+
+.toggle input:checked + .toggle__slider::before {
+    transform: translateX(20px);
+}
+
+/** 섹션 */
+.popup__section {
+    margin-bottom: 16px;
+}
+
+.popup__section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+/** 통계 */
+.stats {
+    background-color: #f9fafb;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.stats__item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.stats__label {
+    color: #6b7280;
+    font-size: 13px;
+}
+
+.stats__value {
+    font-weight: 600;
+    font-size: 18px;
+    color: #111827;
+    margin-left: auto;
+}
+
+.stats__unit {
+    color: #6b7280;
+    font-size: 12px;
+}
+
+.stats__row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.stats__row .stats__item {
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.stats__row .stats__value {
+    margin-left: 0;
+    font-size: 16px;
+}
+
+.stats__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.stats__dot--safe {
+    background-color: #22c55e;
+}
+
+.stats__dot--caution {
+    background-color: #eab308;
+}
+
+.stats__dot--danger {
+    background-color: #ef4444;
+}
+
+/** API 상태 */
+.api-status {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.api-status__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background-color: #f9fafb;
+    border-radius: 6px;
+}
+
+.api-status__name {
+    font-size: 13px;
+    color: #374151;
+}
+
+.api-status__indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    transition: background-color 0.3s ease;
+}
+
+.api-status__indicator[data-status="connected"] {
+    background-color: #22c55e;
+    box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
+}
+
+.api-status__indicator[data-status="checking"] {
+    background-color: #3b82f6;
+    animation: pulse 1s ease-in-out infinite;
+}
+
+.api-status__indicator[data-status="unconfigured"] {
+    background-color: #9ca3af;
+}
+
+.api-status__indicator[data-status="error"] {
+    background-color: #ef4444;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/** 푸터 */
+.popup__footer {
+    padding-top: 12px;
+    border-top: 1px solid #e5e7eb;
+}
+
+/** 버튼 */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+    background-color: #f3f4f6;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.btn:hover {
+    background-color: #e5e7eb;
+}
+
+.btn__icon {
+    width: 16px;
+    height: 16px;
+}
+
+.btn--settings:hover {
+    background-color: #dbeafe;
+    color: #2563eb;
+}

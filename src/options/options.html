@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>카-스 프리 설정</title>
+    <link rel="stylesheet" href="options.css">
+</head>
+<body>
+    <div class="options">
+        <!-- 헤더 -->
+        <header class="options__header">
+            <img src="../../icons/icon48.png" alt="로고" width="32" height="32">
+            <h1 class="options__title">카-스 프리 설정</h1>
+        </header>
+
+        <!-- API 설정 섹션 -->
+        <section class="options__section">
+            <h2 class="options__section-title">2차 검증 API 설정</h2>
+            <p class="options__section-desc">
+                1차 검증(Kas-Free 데이터베이스)으로 판단이 애매한 경우 2차 검증을 수행합니다.
+                체크된 API만 사용되며, 우선순위 순서대로 시도합니다.
+            </p>
+
+            <!-- Gemini Flash API -->
+            <div class="api-config">
+                <div class="api-config__header">
+                    <label class="checkbox">
+                        <input type="checkbox" id="geminiFlashEnabled">
+                        <span class="checkbox__mark"></span>
+                        <span class="checkbox__label">Gemini Flash</span>
+                    </label>
+                    <div class="api-config__priority">
+                        <label for="geminiFlashPriority">우선순위</label>
+                        <select id="geminiFlashPriority">
+                            <option value="1" selected>1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="api-config__body">
+                    <label for="geminiFlashApiKey">API 키</label>
+                    <input type="password" id="geminiFlashApiKey" placeholder="Google AI Studio API 키 입력">
+                </div>
+            </div>
+
+            <!-- Claude Haiku API -->
+            <div class="api-config">
+                <div class="api-config__header">
+                    <label class="checkbox">
+                        <input type="checkbox" id="claudeHaikuEnabled">
+                        <span class="checkbox__mark"></span>
+                        <span class="checkbox__label">Claude Haiku</span>
+                    </label>
+                    <div class="api-config__priority">
+                        <label for="claudeHaikuPriority">우선순위</label>
+                        <select id="claudeHaikuPriority">
+                            <option value="1">1</option>
+                            <option value="2" selected>2</option>
+                            <option value="3">3</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="api-config__body">
+                    <label for="claudeHaikuApiKey">API 키</label>
+                    <input type="password" id="claudeHaikuApiKey" placeholder="Anthropic API 키 입력">
+                </div>
+            </div>
+
+            <!-- GPT-4o-mini API -->
+            <div class="api-config">
+                <div class="api-config__header">
+                    <label class="checkbox">
+                        <input type="checkbox" id="gpt4oMiniEnabled">
+                        <span class="checkbox__mark"></span>
+                        <span class="checkbox__label">GPT-4o-mini</span>
+                    </label>
+                    <div class="api-config__priority">
+                        <label for="gpt4oMiniPriority">우선순위</label>
+                        <select id="gpt4oMiniPriority">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3" selected>3</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="api-config__body">
+                    <label for="gpt4oMiniApiKey">API 키</label>
+                    <input type="password" id="gpt4oMiniApiKey" placeholder="OpenAI API 키 입력">
+                </div>
+            </div>
+        </section>
+
+        <!-- 민감도 설정 섹션 -->
+        <section class="options__section">
+            <h2 class="options__section-title">위험도 판정 기준</h2>
+            <p class="options__section-desc">
+                각 카테고리별 민감도를 조정합니다. 높을수록 엄격하게 판정합니다.
+            </p>
+
+            <div class="sensitivity">
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">고어</span>
+                        <span class="sensitivity__value" id="goreValue">80%</span>
+                    </div>
+                    <input type="range" id="goreSensitivity" min="0" max="100" value="80" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">폭력</span>
+                        <span class="sensitivity__value" id="violenceValue">80%</span>
+                    </div>
+                    <input type="range" id="violenceSensitivity" min="0" max="100" value="80" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">죽음</span>
+                        <span class="sensitivity__value" id="deathValue">80%</span>
+                    </div>
+                    <input type="range" id="deathSensitivity" min="0" max="100" value="80" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">혐오</span>
+                        <span class="sensitivity__value" id="disturbingValue">80%</span>
+                    </div>
+                    <input type="range" id="disturbingSensitivity" min="0" max="100" value="80" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">벌레/생물</span>
+                        <span class="sensitivity__value" id="insectsValue">70%</span>
+                    </div>
+                    <input type="range" id="insectsSensitivity" min="0" max="100" value="70" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">의료공포</span>
+                        <span class="sensitivity__value" id="medicalValue">70%</span>
+                    </div>
+                    <input type="range" id="medicalSensitivity" min="0" max="100" value="70" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">충격</span>
+                        <span class="sensitivity__value" id="shockValue">70%</span>
+                    </div>
+                    <input type="range" id="shockSensitivity" min="0" max="100" value="70" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">동물학대</span>
+                        <span class="sensitivity__value" id="animalCrueltyValue">80%</span>
+                    </div>
+                    <input type="range" id="animalCrueltySensitivity" min="0" max="100" value="80" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">음란물</span>
+                        <span class="sensitivity__value" id="nsfwPornValue">30%</span>
+                    </div>
+                    <input type="range" id="nsfwPornSensitivity" min="0" max="100" value="30" class="sensitivity__slider">
+                </div>
+
+                <div class="sensitivity__item">
+                    <div class="sensitivity__header">
+                        <span class="sensitivity__label">선정성</span>
+                        <span class="sensitivity__value" id="nsfwSexyValue">20%</span>
+                    </div>
+                    <input type="range" id="nsfwSexySensitivity" min="0" max="100" value="20" class="sensitivity__slider">
+                </div>
+            </div>
+        </section>
+
+        <!-- 신호등 임계값 설정 -->
+        <section class="options__section">
+            <h2 class="options__section-title">신호등 임계값</h2>
+            <p class="options__section-desc">
+                위험 점수에 따른 신호등 색상 전환 기준을 설정합니다.
+            </p>
+
+            <div class="thresholds">
+                <div class="thresholds__item">
+                    <div class="thresholds__visual">
+                        <span class="thresholds__signal thresholds__signal--safe"></span>
+                        <span class="thresholds__arrow">→</span>
+                        <span class="thresholds__signal thresholds__signal--caution"></span>
+                    </div>
+                    <div class="thresholds__input">
+                        <label for="safeMaxThreshold">초록 → 노란</label>
+                        <input type="number" id="safeMaxThreshold" min="0" max="1" step="0.1" value="0.3">
+                    </div>
+                </div>
+
+                <div class="thresholds__item">
+                    <div class="thresholds__visual">
+                        <span class="thresholds__signal thresholds__signal--caution"></span>
+                        <span class="thresholds__arrow">→</span>
+                        <span class="thresholds__signal thresholds__signal--danger"></span>
+                    </div>
+                    <div class="thresholds__input">
+                        <label for="cautionMaxThreshold">노란 → 빨강</label>
+                        <input type="number" id="cautionMaxThreshold" min="0" max="1" step="0.1" value="0.6">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 동작 설정 섹션 -->
+        <section class="options__section">
+            <h2 class="options__section-title">동작 설정</h2>
+
+            <div class="behavior">
+                <label class="checkbox">
+                    <input type="checkbox" id="autoScan" checked>
+                    <span class="checkbox__mark"></span>
+                    <span class="checkbox__label">자동 검사 활성화</span>
+                </label>
+
+                <label class="checkbox">
+                    <input type="checkbox" id="onlyWithThumbnail" checked>
+                    <span class="checkbox__mark"></span>
+                    <span class="checkbox__label">썸네일 있는 게시글만 검사</span>
+                </label>
+
+                <label class="checkbox">
+                    <input type="checkbox" id="autoHideDanger">
+                    <span class="checkbox__mark"></span>
+                    <span class="checkbox__label">빨간 신호등 게시글 자동 숨김</span>
+                </label>
+
+                <label class="checkbox">
+                    <input type="checkbox" id="cacheEnabled" checked>
+                    <span class="checkbox__mark"></span>
+                    <span class="checkbox__label">검사 결과 캐싱 (24시간)</span>
+                </label>
+
+                <label class="checkbox">
+                    <input type="checkbox" id="debugMode">
+                    <span class="checkbox__mark"></span>
+                    <span class="checkbox__label">디버그 모드 (콘솔 로그 출력)</span>
+                </label>
+
+                <label class="checkbox">
+                    <input type="checkbox" id="replaceAllImages">
+                    <span class="checkbox__mark"></span>
+                    <span class="checkbox__label">(디버그) 모든 게시글 이미지 너굴맨으로 대체</span>
+                </label>
+            </div>
+        </section>
+
+        <!-- 성능 모니터링 섹션 -->
+        <section class="options__section">
+            <div class="section-header">
+                <h2 class="options__section-title">⚡ 성능 모니터링</h2>
+                <button class="btn btn--small" id="btnRefreshMetrics">🔄 새로고침</button>
+            </div>
+            <p class="options__section-desc">
+                실시간 성능 메트릭 및 최적화 통계를 확인합니다.
+            </p>
+
+            <!-- 캐시 성능 -->
+            <div class="metrics-group">
+                <h3 class="metrics-group__title">📦 캐시 성능</h3>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-card__label">캐시 히트율</div>
+                        <div class="metric-card__value" id="metricCacheHitRate">-</div>
+                        <div class="metric-card__desc">높을수록 빠름</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card__label">캐시 항목</div>
+                        <div class="metric-card__value" id="metricCacheEntries">-</div>
+                        <div class="metric-card__desc">저장된 결과 수</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card__label">평균 접근 횟수</div>
+                        <div class="metric-card__value" id="metricAvgAccess">-</div>
+                        <div class="metric-card__desc">재사용 빈도</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 분석 성능 -->
+            <div class="metrics-group">
+                <h3 class="metrics-group__title">🔍 분석 성능</h3>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-card__label">평균 분석 시간</div>
+                        <div class="metric-card__value" id="metricAvgAnalysis">-</div>
+                        <div class="metric-card__desc">전체 과정 소요 시간</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card__label">해시 생성 시간</div>
+                        <div class="metric-card__value" id="metricAvgHash">-</div>
+                        <div class="metric-card__desc">WebWorker 병렬 처리</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card__label">총 분석 횟수</div>
+                        <div class="metric-card__value" id="metricTotalAnalysis">-</div>
+                        <div class="metric-card__desc">누적 처리량</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 적응형 타임아웃 -->
+            <div class="metrics-group">
+                <h3 class="metrics-group__title">⏱️ 적응형 타임아웃</h3>
+                <div class="timeout-stats" id="timeoutStats">
+                    <p class="loading-message">통계를 불러오는 중...</p>
+                </div>
+            </div>
+
+            <!-- 메모리 사용량 -->
+            <div class="metrics-group">
+                <h3 class="metrics-group__title">💾 리소스 사용량</h3>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-card__label">이미지 최적화</div>
+                        <div class="metric-card__value" id="metricImageOptimization">-</div>
+                        <div class="metric-card__desc">용량 절감 비율</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card__label">Prefetch 적중</div>
+                        <div class="metric-card__value" id="metricPrefetchHit">-</div>
+                        <div class="metric-card__desc">미리 분석한 게시글</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-card__label">평균 응답 시간</div>
+                        <div class="metric-card__value" id="metricAvgResponse">-</div>
+                        <div class="metric-card__desc">사용자 체감 속도</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 건강 상태 -->
+            <div class="metrics-group">
+                <h3 class="metrics-group__title">🛡️ 시스템 건강 상태</h3>
+                <div class="health-status" id="healthStatus">
+                    <div class="health-indicator">
+                        <div class="health-indicator__icon" id="healthIcon">✅</div>
+                        <div class="health-indicator__info">
+                            <div class="health-indicator__label">상태</div>
+                            <div class="health-indicator__value" id="healthStatusText">정상</div>
+                        </div>
+                    </div>
+                    <div class="health-stats">
+                        <div class="health-stat">
+                            <span class="health-stat__label">총 에러</span>
+                            <span class="health-stat__value" id="healthTotalErrors">0</span>
+                        </div>
+                        <div class="health-stat">
+                            <span class="health-stat__label">최근 에러</span>
+                            <span class="health-stat__value" id="healthRecentErrors">0</span>
+                        </div>
+                        <div class="health-stat">
+                            <span class="health-stat__label">에러율</span>
+                            <span class="health-stat__value" id="healthErrorRate">0%</span>
+                        </div>
+                        <div class="health-stat">
+                            <span class="health-stat__label">복구 중</span>
+                            <span class="health-stat__value" id="healthActiveRetries">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 메모리 및 리소스 -->
+            <div class="metrics-group">
+                <h3 class="metrics-group__title">🧹 메모리 및 리소스</h3>
+                <div class="memory-stats">
+                    <div class="memory-usage">
+                        <div class="memory-usage__header">
+                            <span class="memory-usage__label">메모리 사용량</span>
+                            <span class="memory-usage__value" id="memoryUsage">-</span>
+                        </div>
+                        <div class="memory-usage__bar">
+                            <div class="memory-usage__fill" id="memoryBar"></div>
+                        </div>
+                        <div class="memory-usage__details">
+                            <span id="memoryDetails">-</span>
+                        </div>
+                    </div>
+                    <div class="resource-counts">
+                        <div class="resource-count">
+                            <span class="resource-count__label">⏱️ 타이머</span>
+                            <span class="resource-count__value" id="resourceTimers">0</span>
+                        </div>
+                        <div class="resource-count">
+                            <span class="resource-count__label">👂 리스너</span>
+                            <span class="resource-count__value" id="resourceListeners">0</span>
+                        </div>
+                        <div class="resource-count">
+                            <span class="resource-count__label">👁️ Observer</span>
+                            <span class="resource-count__value" id="resourceObservers">0</span>
+                        </div>
+                        <div class="resource-count">
+                            <span class="resource-count__label">⚙️ Worker</span>
+                            <span class="resource-count__value" id="resourceWorkers">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 저장 버튼 -->
+        <div class="options__actions">
+            <button class="btn btn--primary" id="btnSave">저장</button>
+            <button class="btn btn--secondary" id="btnReset">기본값으로 복원</button>
+        </div>
+
+        <!-- 저장 완료 알림 -->
+        <div class="toast" id="toast">
+            <span class="toast__message">설정이 저장되었습니다.</span>
+        </div>
+
+        <!-- 푸터 정보 -->
+        <footer class="options__footer">
+            <div class="footer__version">
+                <span>카-스 프리 v<span id="appVersion">1.0.0</span></span>
+            </div>
+            <div class="footer__links">
+                <div class="footer__contact">
+                    <span>문의 및 버그 리포트:</span>
+                    <a href="mailto:jinho.von.choi@nerdvana.kr" target="_blank" rel="noopener">
+                        jinho.von.choi@nerdvana.kr
+                    </a>
+                </div>
+                <div class="footer__support">
+                    <span>안구 건강에 도움이 좀 되엇읍니까?</span>
+                    <a href="https://buymeacoffee.com/jinho.von.choi" target="_blank" rel="noopener" class="btn btn--coffee">
+                        ☕ 커피 한 잔 후원하기
+                    </a>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script src="options.js"></script>
+</body>
+</html>
