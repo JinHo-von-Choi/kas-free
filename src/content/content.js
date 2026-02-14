@@ -1558,36 +1558,39 @@
      * @returns {Promise<object>}
      */
     function requestImageAnalysis(postInfo) {
-        return new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage(
-                {
-                    type:    'ANALYZE_IMAGE',
-                    postNo:  postInfo.postNo,
-                    postUrl: postInfo.postUrl
-                },
-                (response) => {
-                    if (chrome.runtime.lastError) {
-                        reject(new Error(chrome.runtime.lastError.message));
-                        return;
-                    }
+        return Promise.race([
+            new Promise((resolve, reject) => {
+                chrome.runtime.sendMessage(
+                    {
+                        type:    'ANALYZE_IMAGE',
+                        postNo:  postInfo.postNo,
+                        postUrl: postInfo.postUrl
+                    },
+                    (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                            return;
+                        }
 
-                    // status가 있으면 정상 응답으로 처리 (error가 있어도)
-                    // 예: status='unchecked', error='이미지를 찾을 수 없습니다'
-                    if (response && response.status) {
+                        // status가 있으면 정상 응답으로 처리 (error가 있어도)
+                        // 예: status='unchecked', error='이미지를 찾을 수 없습니다'
+                        if (response && response.status) {
+                            resolve(response);
+                            return;
+                        }
+
+                        // status도 없고 error만 있으면 실제 에러
+                        if (response && response.error) {
+                            reject(new Error(response.error));
+                            return;
+                        }
+
                         resolve(response);
-                        return;
                     }
-
-                    // status도 없고 error만 있으면 실제 에러
-                    if (response && response.error) {
-                        reject(new Error(response.error));
-                        return;
-                    }
-
-                    resolve(response);
-                }
-            );
-        });
+                );
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('분석 요청 타임아웃 (10초)')), 10000))
+        ]);
     }
 
     /**
