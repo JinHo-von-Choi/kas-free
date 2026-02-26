@@ -1259,10 +1259,24 @@
 
                 const perfStart = performance.now();
 
-                const BATCH_SIZE = 5;  // 한 번에 5개씩 처리
-                for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-                    const batch = rows.slice(i, i + BATCH_SIZE);  // 5개 추출
-                    await Promise.all(batch.map(row => processPostRow(row)));  // 5개 병렬 처리
+                // ========================================
+                // AdaptiveBatchManager로 동적 배치 크기 조절
+                // ========================================
+                // - 네트워크 상태에 따라 배치 크기 자동 조절
+                // - 4G: 50개, 3G: 30개, 2G: 10개
+                // - 성공/실패 피드백으로 동적 최적화
+                const batchManager = window.getAdaptiveBatchManager();
+                const batches = batchManager.splitIntoBatches(rows);
+
+                for (const batch of batches) {
+                    try {
+                        await Promise.all(batch.map(row => processPostRow(row)));
+                        batchManager.recordSuccess(batch.length);
+                    } catch (error) {
+                        console.error('[processPostList] 배치 처리 실패:', error);
+                        batchManager.recordFailure(error);
+                        throw error;
+                    }
                 }
 
                 const perfEnd = performance.now();
@@ -1273,7 +1287,8 @@
                     rowCount: rows.length,
                     totalTime: `${duration.toFixed(2)}ms`,
                     avgPerPost: `${avgPerPost.toFixed(2)}ms`,
-                    batchSize: BATCH_SIZE
+                    batchSize: batchManager.getBatchSize(),
+                    batchCount: batches.length
                 });
             }
         }
