@@ -40,6 +40,7 @@
             "js": [
                 "src/utils/db.js",
                 "src/utils/apiRequestManager.global.js",
+                "src/utils/lazyImageAnalyzer.global.js",
                 "src/content/dcParser.js",
                 "src/content/content.js"
             ],
