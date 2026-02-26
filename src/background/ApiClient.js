@@ -23,6 +23,7 @@
 
 import { AI_ANALYSIS_PROMPT } from '../utils/constants.js';
 import { AdaptiveTimeoutManager } from './AdaptiveTimeoutManager.js';
+import { validateAndNormalizeAIResponse } from '../utils/aiResponseValidator.js';
 
 /**
  * ========================================
@@ -548,7 +549,16 @@ export class ApiClient {
         }
 
         const result = await response.json();
-        return JSON.parse(result.choices[0].message.content);
+        const aiResponse = JSON.parse(result.choices[0].message.content);
+
+        // AI 응답 검증 및 정규화
+        const validation = validateAndNormalizeAIResponse(aiResponse);
+
+        if (validation.normalized) {
+            console.warn('[ApiClient] GPT-4o-mini 응답 정규화됨:', validation.errors);
+        }
+
+        return validation.data;
     }
 
     /**
@@ -614,7 +624,16 @@ export class ApiClient {
         }
 
         const result = await response.json();
-        return JSON.parse(result.content[0].text);
+        const aiResponse = JSON.parse(result.content[0].text);
+
+        // AI 응답 검증 및 정규화
+        const validation = validateAndNormalizeAIResponse(aiResponse);
+
+        if (validation.normalized) {
+            console.warn('[ApiClient] Claude Haiku 응답 정규화됨:', validation.errors);
+        }
+
+        return validation.data;
     }
 
     /**
@@ -678,6 +697,15 @@ export class ApiClient {
         }
 
         const result = await response.json();
-        return JSON.parse(result.candidates[0].content.parts[0].text);
+        const aiResponse = JSON.parse(result.candidates[0].content.parts[0].text);
+
+        // AI 응답 검증 및 정규화
+        const validation = validateAndNormalizeAIResponse(aiResponse);
+
+        if (validation.normalized) {
+            console.warn('[ApiClient] Gemini Flash 응답 정규화됨:', validation.errors);
+        }
+
+        return validation.data;
     }
 }
