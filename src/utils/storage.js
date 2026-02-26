@@ -3,9 +3,11 @@
  * @author 최진호
  * @date 2026-01-31
  * @version 1.0.0
+ * @modified 2026-02-26 (설정값 검증 추가)
  */
 
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_STATS } from './constants.js';
+import { validateSettings, ensureSettingsIntegrity } from './settingsValidator.js';
 
 /**
  * 스토리지에서 값을 가져온다
@@ -60,7 +62,13 @@ export async function removeStorage(key) {
  */
 export async function getSettings() {
     const settings = await getStorage(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
-    return { ...DEFAULT_SETTINGS, ...settings };
+    const merged = { ...DEFAULT_SETTINGS, ...settings };
+
+    // 설정값 검증 및 무결성 확인
+    const validated = validateSettings(merged);
+    const safe = ensureSettingsIntegrity(validated);
+
+    return safe;
 }
 
 /**
@@ -69,7 +77,11 @@ export async function getSettings() {
  * @returns {Promise<boolean>}
  */
 export async function saveSettings(settings) {
-    return setStorage(STORAGE_KEYS.SETTINGS, settings);
+    // 설정값 검증
+    const validated = validateSettings(settings);
+    const safe = ensureSettingsIntegrity(validated);
+
+    return setStorage(STORAGE_KEYS.SETTINGS, safe);
 }
 
 /**
@@ -79,8 +91,13 @@ export async function saveSettings(settings) {
  */
 export async function updateSettings(partialSettings) {
     const currentSettings = await getSettings();
-    const newSettings     = deepMerge(currentSettings, partialSettings);
-    return saveSettings(newSettings);
+    const merged = deepMerge(currentSettings, partialSettings);
+
+    // 병합 후 검증
+    const validated = validateSettings(merged);
+    const safe = ensureSettingsIntegrity(validated);
+
+    return setStorage(STORAGE_KEYS.SETTINGS, safe);
 }
 
 /**
