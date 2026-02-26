@@ -206,6 +206,29 @@
     let domChangeTimer = null;
 
     /**
+     * ========================================
+     * 메모리 누수 방지용 전역 참조
+     * ========================================
+     *
+     * 페이지 종료 시 정리할 리소스들을 추적합니다.
+     *
+     * 왜 필요한가요?
+     * - MutationObserver, addEventListener, setInterval 등은
+     *   페이지가 닫혀도 메모리에 남아있을 수 있음
+     * - 명시적으로 disconnect(), removeEventListener(), clearInterval() 호출 필요
+     * - 이 변수들을 사용하여 cleanup() 함수에서 일괄 정리
+     */
+
+    /** MutationObserver 인스턴스 (DOM 변경 감지) */
+    let domObserver = null;
+
+    /** 전역 이벤트 리스너 목록 (cleanup용) */
+    const globalEventListeners = [];
+
+    /** 활성 타이머 목록 (setInterval, 장시간 setTimeout) */
+    const activeTimers = new Set();
+
+    /**
      * 프리뷰 실패한 게시글 목록 (재시도 방지)
      * @type {Set<string>}
      *
@@ -714,26 +737,7 @@
             // 왜 정리가 필요한가요?
             // - setInterval은 페이지가 닫혀도 계속 실행됨 (메모리 누수)
             // - DOM 엘리먼트는 자동 제거되지만 이벤트 리스너는 남음
-            window.addEventListener('beforeunload', () => {
-                // ========================================
-                // 툴팁 제거 (DOM 정리)
-                // ========================================
-                hideTooltip();        // 신호등 툴팁 숨김
-                hidePostPreview();    // 게시글 프리뷰 툴팁 숨김
-
-                // ========================================
-                // 인터벌 정리 (타이머 중지)
-                // ========================================
-                // clearInterval(): setInterval로 등록한 타이머 중지
-                // 중지하지 않으면 메모리 누수 발생
-                if (cleanupIntervalId) {
-                    clearInterval(cleanupIntervalId);  // 주기적 DB 정리 중지
-                }
-                if (window.periodicCheckIntervalId) {
-                    clearInterval(window.periodicCheckIntervalId);  // 주기적 신호등 체크 중지
-                }
-                // 이제 타이머가 완전히 중지됨 (메모리 해제)
-            });
+            window.addEventListener('beforeunload', cleanupAll);
 
         } catch (error) {
             // ========================================
