@@ -1606,39 +1606,49 @@
      * @returns {Promise<object>}
      */
     function requestImageAnalysis(postInfo) {
-        return Promise.race([
-            new Promise((resolve, reject) => {
-                chrome.runtime.sendMessage(
-                    {
-                        type:    'ANALYZE_IMAGE',
-                        postNo:  postInfo.postNo,
-                        postUrl: postInfo.postUrl
-                    },
-                    (response) => {
-                        if (chrome.runtime.lastError) {
-                            reject(new Error(chrome.runtime.lastError.message));
-                            return;
-                        }
+        // ApiRequestManager를 사용하여 중복 요청 방지
+        const apiManager = window.getApiRequestManager();
 
-                        // status가 있으면 정상 응답으로 처리 (error가 있어도)
-                        // 예: status='unchecked', error='이미지를 찾을 수 없습니다'
-                        if (response && response.status) {
-                            resolve(response);
-                            return;
-                        }
+        return apiManager.requestImageAnalysis(
+            postInfo.postNo,
+            () => {
+                // 실제 분석 요청 로직
+                return Promise.race([
+                    new Promise((resolve, reject) => {
+                        chrome.runtime.sendMessage(
+                            {
+                                type:    'ANALYZE_IMAGE',
+                                postNo:  postInfo.postNo,
+                                postUrl: postInfo.postUrl
+                            },
+                            (response) => {
+                                if (chrome.runtime.lastError) {
+                                    reject(new Error(chrome.runtime.lastError.message));
+                                    return;
+                                }
 
-                        // status도 없고 error만 있으면 실제 에러
-                        if (response && response.error) {
-                            reject(new Error(response.error));
-                            return;
-                        }
+                                // status가 있으면 정상 응답으로 처리 (error가 있어도)
+                                // 예: status='unchecked', error='이미지를 찾을 수 없습니다'
+                                if (response && response.status) {
+                                    resolve(response);
+                                    return;
+                                }
 
-                        resolve(response);
-                    }
-                );
-            }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('분석 요청 타임아웃 (10초)')), 10000))
-        ]);
+                                // status도 없고 error만 있으면 실제 에러
+                                if (response && response.error) {
+                                    reject(new Error(response.error));
+                                    return;
+                                }
+
+                                resolve(response);
+                            }
+                        );
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('분석 요청 타임아웃 (10초)')), 10000))
+                ]);
+            },
+            300  // 300ms debounce
+        );
     }
 
     /**
@@ -1648,35 +1658,45 @@
      * @returns {Promise<object>}
      */
     function requestAIVerification(postInfo, imageUrl) {
-        return Promise.race([
-            new Promise((resolve, reject) => {
-                chrome.runtime.sendMessage(
-                    {
-                        type:     'VERIFY_WITH_AI',
-                        postNo:   postInfo.postNo,
-                        postUrl:  postInfo.postUrl,
-                        imageUrl: imageUrl  // 이미지 URL 직접 전달
-                    },
-                    (response) => {
-                        if (chrome.runtime.lastError) {
-                            reject(new Error(chrome.runtime.lastError.message));
-                            return;
-                        }
+        // ApiRequestManager를 사용하여 중복 요청 방지 (AI 검증은 500ms debounce)
+        const apiManager = window.getApiRequestManager();
 
-                        if (response && response.error) {
-                            reject(new Error(response.error));
-                            return;
-                        }
+        return apiManager.requestAIVerification(
+            postInfo.postNo,
+            () => {
+                // 실제 AI 검증 요청 로직
+                return Promise.race([
+                    new Promise((resolve, reject) => {
+                        chrome.runtime.sendMessage(
+                            {
+                                type:     'VERIFY_WITH_AI',
+                                postNo:   postInfo.postNo,
+                                postUrl:  postInfo.postUrl,
+                                imageUrl: imageUrl  // 이미지 URL 직접 전달
+                            },
+                            (response) => {
+                                if (chrome.runtime.lastError) {
+                                    reject(new Error(chrome.runtime.lastError.message));
+                                    return;
+                                }
 
-                        resolve(response);
-                    }
-                );
-            }),
-            // AI 검증은 30초 타임아웃 (이미지 분석보다 오래 걸릴 수 있음)
-            new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('AI 검증 타임아웃 (30초)')), 30000)
-            )
-        ]);
+                                if (response && response.error) {
+                                    reject(new Error(response.error));
+                                    return;
+                                }
+
+                                resolve(response);
+                            }
+                        );
+                    }),
+                    // AI 검증은 30초 타임아웃 (이미지 분석보다 오래 걸릴 수 있음)
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('AI 검증 타임아웃 (30초)')), 30000)
+                    )
+                ]);
+            },
+            500  // 500ms debounce (사용자가 버튼을 여러 번 클릭할 수 있음)
+        );
     }
 
     /**
