@@ -54,6 +54,7 @@ import { ImageReportHandler } from './ImageReportHandler.js';       // 이미지
 import { ErrorRecoveryManager } from './ErrorRecoveryManager.js';   // 에러 자동 복구
 import { getPerformanceMonitor } from '../utils/PerformanceMonitor.js'; // 성능 측정
 import { getResourceManager } from '../utils/ResourceManager.js';       // 메모리 관리
+import { MemoryManager, CachePriority } from '../sw/memoryManager.js';   // Cache Storage 메모리 관리
 
 // ========================================
 // 전역 변수 (Global Variables)
@@ -138,6 +139,16 @@ let performanceMonitor = null;
  * - 현재 null로 유지 (동기 방식으로 폴백)
  */
 let hashWorker = null;
+
+/**
+ * Memory Manager (Cache Storage 메모리 관리)
+ * - 브라우저 Cache Storage API 기반 캐시 관리
+ * - LRU 기반 자동 정리 (Least Recently Used)
+ * - 우선순위 기반 정리 (HIGH, MEDIUM, LOW)
+ * - 메모리 압박 시 자동 정리
+ * - 7일 자동 만료, 100MB 용량 제한
+ */
+let memoryManager = null;
 
 /**
  * ========================================
@@ -249,7 +260,23 @@ async function initialize() {
     console.log('[Kas-Free] Image Report Handler 초기화 완료');
 
     // ========================================
-    // 10단계: Hash Worker 초기화 (실패)
+    // 10단계: Memory Manager 초기화 (Cache Storage)
+    // ========================================
+    // Cache Storage API 기반 캐시 자동 정리
+    // - 100MB 용량 제한
+    // - 7일 자동 만료
+    // - LRU 기반 정리 (오래 사용 안 한 것부터 삭제)
+    // - 우선순위: HIGH (항상 유지) > MEDIUM (자주 사용) > LOW (일회성)
+    memoryManager = new MemoryManager({
+        maxCacheSize: 100 * 1024 * 1024,        // 100MB
+        cacheExpiry: 7 * 24 * 60 * 60 * 1000,   // 7일
+        cleanupInterval: 10 * 60 * 1000         // 10분마다 정리
+    });
+    await memoryManager.init();
+    console.log('[Kas-Free] Memory Manager 초기화 완료 (Cache Storage)');
+
+    // ========================================
+    // 11단계: Hash Worker 초기화 (실패)
     // ========================================
     // Service Worker 환경의 제약 사항:
     // - Worker API를 사용할 수 없음 (별도 스레드 생성 불가)
@@ -263,7 +290,7 @@ async function initialize() {
     console.log('[Kas-Free] Service Worker 환경: 동기 해시 생성 모드 사용');
 
     // ========================================
-    // 11단계: 만료된 캐시 정리
+    // 12단계: 만료된 캐시 정리
     // ========================================
     // TTL(Time To Live) 시간이 지난 캐시 데이터 삭제
     // - 예: 24시간 지난 이미지 분석 결과는 삭제
