@@ -55,6 +55,7 @@ import { ErrorRecoveryManager } from './ErrorRecoveryManager.js';   // 에러 �
 import { getPerformanceMonitor } from '../utils/PerformanceMonitor.js'; // 성능 측정
 import { getResourceManager } from '../utils/ResourceManager.js';       // 메모리 관리
 import { MemoryManager, CachePriority } from '../sw/memoryManager.js';   // Cache Storage 메모리 관리
+import { getFetchQueueManager } from '../utils/fetchQueueManager.js';    // Fetch 요청 Queue (차단 방지)
 
 // ========================================
 // 전역 변수 (Global Variables)
@@ -149,6 +150,14 @@ let hashWorker = null;
  * - 7일 자동 만료, 100MB 용량 제한
  */
 let memoryManager = null;
+
+/**
+ * Fetch Queue Manager (디시인사이드 차단 방지)
+ * - 초당 3개 (333ms 간격)로 fetch 요청 제한
+ * - Queue 구조로 순차 처리
+ * - 캐시 히트는 영향 없음 (fetch 안 함)
+ */
+let fetchQueueManager = null;
 
 /**
  * ========================================
@@ -274,6 +283,19 @@ async function initialize() {
     });
     await memoryManager.init();
     console.log('[Kas-Free] Memory Manager 초기화 완료 (Cache Storage)');
+
+    // ========================================
+    // 10-1단계: Fetch Queue Manager 초기화 (디시인사이드 차단 방지)
+    // ========================================
+    // 짧은 시간 내 너무 많은 fetch 요청 → 디시인사이드 차단
+    // - 초당 3개 제한 (333ms 간격)
+    // - Queue 구조로 순차 처리
+    // - 캐시 히트는 영향 없음 (fetch 요청 자체가 안 나감)
+    fetchQueueManager = getFetchQueueManager({
+        requestsPerSecond: 3,   // 초당 3개
+        maxQueueSize: 100       // 최대 100개 대기
+    });
+    console.log('[Kas-Free] Fetch Queue Manager 초기화 완료 (초당 3개)');
 
     // ========================================
     // 11단계: Hash Worker 초기화 (실패)
@@ -1072,46 +1094,65 @@ function buildFinalResult(primary, secondary, status) {
  * @returns {Promise<string|null>}
  */
 async function fetchPostImage(postUrl) {
-    try {
-        const response = await fetch(postUrl, {
-            credentials: 'include',
-            referrerPolicy: 'no-referrer'
-        });
+    // ========================================
+    // Fetch Queue Manager를 통한 순차 처리
+    // ========================================
+    // 왜 Queue를 사용하나요?
+    // - 동시에 여러 게시글 fetch → 디시인사이드 차단
+    // - Queue로 순차 처리 (초당 3개) → 차단 방지
+    //
+    // 캐시 히트 시에는 이 함수 자체가 호출 안 됨 (영향 없음)
 
-        if (!response.ok) {
-            console.log('[Kas-Free] fetch 실패:', response.status);
-            return null;
-        }
+    // postNo 추출 (디버깅용)
+    const postNo = postUrl.match(/no=(\d+)/)?.[1] || 'unknown';
 
-        const html = await response.text();
+    return await fetchQueueManager.enqueue(
+        async () => {
+            // 실제 fetch 로직
+            try {
+                const response = await fetch(postUrl, {
+                    credentials: 'include',
+                    referrerPolicy: 'no-referrer'
+                });
 
-        // OG 이미지 추출 (정규식)
-        const ogImageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-        if (ogImageMatch && ogImageMatch[1]) {
-            console.log('[Kas-Free] OG 이미지 발견:', ogImageMatch[1]);
-            return ogImageMatch[1];
-        }
+                if (!response.ok) {
+                    console.log('[Kas-Free] fetch 실패:', response.status);
+                    return null;
+                }
 
-        // 대체: content가 먼저 오는 경우
-        const ogImageMatch2 = html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:image["']/i);
-        if (ogImageMatch2 && ogImageMatch2[1]) {
-            console.log('[Kas-Free] OG 이미지 발견 (대체):', ogImageMatch2[1]);
-            return ogImageMatch2[1];
-        }
+                const html = await response.text();
 
-        // 본문 첫 이미지 추출 (viewimage.php 패턴)
-        const viewImageMatch = html.match(/src=["'](https?:\/\/dcimg[0-9]\.dcinside\.(?:com|co\.kr)\/viewimage\.php[^"']+)["']/i);
-        if (viewImageMatch && viewImageMatch[1]) {
-            console.log('[Kas-Free] 본문 이미지 발견:', viewImageMatch[1]);
-            return viewImageMatch[1];
-        }
+                // OG 이미지 추출 (정규식)
+                const ogImageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
+                if (ogImageMatch && ogImageMatch[1]) {
+                    console.log('[Kas-Free] OG 이미지 발견:', ogImageMatch[1]);
+                    return ogImageMatch[1];
+                }
 
-        console.log('[Kas-Free] 이미지를 찾을 수 없음');
-        return null;
-    } catch (error) {
-        console.error('[Kas-Free] 이미지 URL 추출 실패:', error);
-        return null;
-    }
+                // 대체: content가 먼저 오는 경우
+                const ogImageMatch2 = html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:image["']/i);
+                if (ogImageMatch2 && ogImageMatch2[1]) {
+                    console.log('[Kas-Free] OG 이미지 발견 (대체):', ogImageMatch2[1]);
+                    return ogImageMatch2[1];
+                }
+
+                // 본문 첫 이미지 추출 (viewimage.php 패턴)
+                const viewImageMatch = html.match(/src=["'](https?:\/\/dcimg[0-9]\.dcinside\.(?:com|co\.kr)\/viewimage\.php[^"']+)["']/i);
+                if (viewImageMatch && viewImageMatch[1]) {
+                    console.log('[Kas-Free] 본문 이미지 발견:', viewImageMatch[1]);
+                    return viewImageMatch[1];
+                }
+
+                console.log('[Kas-Free] 이미지를 찾을 수 없음');
+                return null;
+
+            } catch (error) {
+                console.error('[Kas-Free] 이미지 URL 추출 실패:', error);
+                return null;
+            }
+        },
+        { postNo }  // 메타데이터 (디버깅용)
+    );
 }
 
 /**
