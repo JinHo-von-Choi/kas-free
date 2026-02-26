@@ -1553,6 +1553,50 @@
     }
 
     /**
+     * ========================================
+     * 메시지 전송 유틸리티 (타임아웃 포함)
+     * ========================================
+     *
+     * chrome.runtime.sendMessage()를 Promise로 래핑하고 타임아웃을 추가한다.
+     *
+     * 왜 필요한가?
+     * - Service Worker가 응답하지 않으면 무한 대기
+     * - Extension context invalidated 시 에러 처리
+     * - 일관된 에러 처리 패턴
+     *
+     * @param {object} message - 메시지 객체
+     * @param {number} timeout - 타임아웃 (ms), 기본값 15초
+     * @returns {Promise<object>}
+     */
+    function sendMessageWithTimeout(message, timeout = 15000) {
+        return Promise.race([
+            // 1. 실제 메시지 전송
+            new Promise((resolve, reject) => {
+                chrome.runtime.sendMessage(message, (response) => {
+                    // chrome.runtime.lastError 체크 (필수!)
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                        return;
+                    }
+
+                    // 응답에 error 필드가 있으면 reject
+                    if (response && response.error) {
+                        reject(new Error(response.error));
+                        return;
+                    }
+
+                    resolve(response);
+                });
+            }),
+
+            // 2. 타임아웃
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('메시지 타임아웃')), timeout)
+            )
+        ]);
+    }
+
+    /**
      * 이미지 분석을 요청한다
      * @param {object} postInfo - 게시글 정보
      * @returns {Promise<object>}
@@ -1600,29 +1644,35 @@
      * @returns {Promise<object>}
      */
     function requestAIVerification(postInfo, imageUrl) {
-        return new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage(
-                {
-                    type:     'VERIFY_WITH_AI',
-                    postNo:   postInfo.postNo,
-                    postUrl:  postInfo.postUrl,
-                    imageUrl: imageUrl  // 이미지 URL 직접 전달
-                },
-                (response) => {
-                    if (chrome.runtime.lastError) {
-                        reject(new Error(chrome.runtime.lastError.message));
-                        return;
-                    }
+        return Promise.race([
+            new Promise((resolve, reject) => {
+                chrome.runtime.sendMessage(
+                    {
+                        type:     'VERIFY_WITH_AI',
+                        postNo:   postInfo.postNo,
+                        postUrl:  postInfo.postUrl,
+                        imageUrl: imageUrl  // 이미지 URL 직접 전달
+                    },
+                    (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                            return;
+                        }
 
-                    if (response && response.error) {
-                        reject(new Error(response.error));
-                        return;
-                    }
+                        if (response && response.error) {
+                            reject(new Error(response.error));
+                            return;
+                        }
 
-                    resolve(response);
-                }
-            );
-        });
+                        resolve(response);
+                    }
+                );
+            }),
+            // AI 검증은 30초 타임아웃 (이미지 분석보다 오래 걸릴 수 있음)
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('AI 검증 타임아웃 (30초)')), 30000)
+            )
+        ]);
     }
 
     /**

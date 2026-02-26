@@ -297,7 +297,29 @@ async function initialize() {
  * - 안 쓰면 sendResponse가 작동하지 않음 (중요!)
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    handleMessage(message, sender, sendResponse);
+    let responded = false;  // sendResponse 호출 여부 추적
+
+    // 타임아웃 타이머 (30초)
+    const timeoutId = setTimeout(() => {
+        if (!responded) {
+            responded = true;
+            sendResponse({
+                error: '처리 시간 초과 (30초). 잠시 후 다시 시도해주세요.',
+                timeout: true,
+                userFriendly: true
+            });
+        }
+    }, 30000);
+
+    // 실제 메시지 처리
+    handleMessage(message, sender, (response) => {
+        if (!responded) {
+            responded = true;
+            clearTimeout(timeoutId);
+            sendResponse(response);
+        }
+    });
+
     return true;  // 🔥 필수! 비동기 응답 허용
 });
 
