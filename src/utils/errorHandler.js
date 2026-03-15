@@ -299,11 +299,16 @@ export function getUserFriendlyMessage(error) {
         'TIMEOUT': '요청 시간이 초과되었습니다. 다시 시도해주세요.',
         'TimeoutError': '요청 시간이 초과되었습니다. 다시 시도해주세요.',
 
-        // API 에러
+        // API 에러 (문자열 코드)
         'UNAUTHORIZED': 'API 키를 확인해주세요.',
         'ApiKeyError': 'API 키를 확인해주세요.',
         'INSUFFICIENT_FUNDS': 'API 잔액이 부족합니다.',
         'RATE_LIMIT': '요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.',
+
+        // API 에러 (HTTP 숫자 코드)
+        401: 'API 키를 확인해주세요.',
+        402: 'API 잔액이 부족합니다.',
+        429: '요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.',
 
         // 데이터베이스 에러
         'IndexedDBError': '로컬 저장소 오류. 캐시를 삭제해보세요.',

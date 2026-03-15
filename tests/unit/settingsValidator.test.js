@@ -55,8 +55,9 @@ describe('settingsValidator', () => {
 
             const result = validateSettings(input);
 
-            expect(result.thresholds.safeMax).toBe(1);
+            // 클램핑 후 순서 조정: safeMax < cautionMax 보장, cautionMax=1
             expect(result.thresholds.cautionMax).toBe(1);
+            expect(result.thresholds.safeMax).toBeLessThan(result.thresholds.cautionMax);
         });
 
         test('safeMax >= cautionMax 자동 조정', () => {

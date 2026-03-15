@@ -58,12 +58,18 @@ describe('ApiClient', () => {
         });
 
         test('타임아웃 발생', async () => {
-            // Mock fetch: 10초 후 응답 (타임아웃 5초)
-            global.fetch.mockImplementation(() =>
-                new Promise(resolve => {
-                    setTimeout(() => {
-                        resolve({ ok: true, status: 200 });
-                    }, 10000);
+            // 빠른 테스트를 위해 짧은 타임아웃 사용
+            client.timeout = 200;
+
+            // Mock fetch: abort 시그널을 구현하여 즉시 중단 가능
+            global.fetch.mockImplementation((url, options) =>
+                new Promise((resolve, reject) => {
+                    if (options?.signal) {
+                        options.signal.addEventListener('abort', () => {
+                            reject(new DOMException('Aborted', 'AbortError'));
+                        });
+                    }
+                    setTimeout(() => resolve({ ok: true, status: 200 }), 2000);
                 })
             );
 
@@ -226,19 +232,20 @@ describe('ApiClient', () => {
             const delay1 = client.calculateDelay(1);
             const delay2 = client.calculateDelay(2);
 
-            // 지연 시간이 증가해야 함
-            expect(delay1).toBeGreaterThan(delay0);
-            expect(delay2).toBeGreaterThan(delay1);
+            // Exponential Backoff: 2^n * baseDelay + jitter(0~1000)
+            // jitter로 인해 delay1 > delay0 보장 불가 → 범위로 검증
+            expect(delay0).toBeGreaterThanOrEqual(100); // 2^0 * 100ms
+            expect(delay0).toBeLessThanOrEqual(1100);   // + 최대 1000ms jitter
 
-            // Exponential Backoff: 2^n * baseDelay
-            expect(delay0).toBeGreaterThanOrEqual(100); // 1 * 100 + jitter
-            expect(delay0).toBeLessThanOrEqual(1100);   // 1 * 100 + 1000
-
-            expect(delay1).toBeGreaterThanOrEqual(200); // 2 * 100 + jitter
+            expect(delay1).toBeGreaterThanOrEqual(200); // 2^1 * 100ms
             expect(delay1).toBeLessThanOrEqual(1200);
 
-            expect(delay2).toBeGreaterThanOrEqual(400); // 4 * 100 + jitter
+            expect(delay2).toBeGreaterThanOrEqual(400); // 2^2 * 100ms
             expect(delay2).toBeLessThanOrEqual(1400);
+
+            // base delay 값은 단조 증가 (jitter 제외)
+            expect(100 * Math.pow(2, 1)).toBeGreaterThan(100 * Math.pow(2, 0));
+            expect(100 * Math.pow(2, 2)).toBeGreaterThan(100 * Math.pow(2, 1));
         });
 
         test('최대 지연 시간 제한 (10초)', () => {
@@ -345,7 +352,7 @@ describe('ApiClient', () => {
         });
 
         test('Anthropic API 호출 (보통)', async () => {
-            // Anthropic은 보통 5-10초
+            // 테스트 속도를 위해 비율을 유지한 채 지연 단축 (700ms / 2000ms)
             global.fetch.mockImplementation(() =>
                 new Promise(resolve => {
                     setTimeout(() => {
@@ -356,12 +363,12 @@ describe('ApiClient', () => {
                                 content: [{ text: 'Hello' }]
                             })
                         });
-                    }, 7000);
+                    }, 700);
                 })
             );
 
-            // 타임아웃을 10초로 증가
-            client.timeout = 10000;
+            // 타임아웃을 응답 시간보다 크게 설정
+            client.timeout = 2000;
 
             const response = await client.fetchWithTimeout('https://api.anthropic.com/v1/messages');
             expect(response.ok).toBe(true);

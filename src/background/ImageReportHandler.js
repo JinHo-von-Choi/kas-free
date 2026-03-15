@@ -8,6 +8,7 @@
 
 import { analyzeAndEncodeImage } from '../utils/imageEncoder.js';
 import { updateStats } from '../utils/storage.js';
+import { DC_IMAGE_FETCH_OPTIONS } from '../utils/constants.js';
 
 /**
  * 이미지 신고 핸들러 클래스
@@ -361,7 +362,7 @@ export class ImageReportHandler {
         try {
             console.log('[ImageReport] 외부 이미지 다운로드 시작:', imageUrl);
 
-            const response = await fetch(imageUrl);
+            const response = await fetch(imageUrl, DC_IMAGE_FETCH_OPTIONS);
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);

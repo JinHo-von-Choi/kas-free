@@ -262,6 +262,9 @@ describe('LazyImageAnalyzer', () => {
 
     describe('prefetch', () => {
         test('화면 밖 요소 미리 로딩', () => {
+            // processQueue가 즉시 큐를 비우지 않도록 mock
+            jest.spyOn(analyzer, 'processQueue').mockImplementation(() => {});
+
             // 3개 요소 생성 (체인)
             const element1 = { dataset: {}, nextElementSibling: null };
             const element2 = { dataset: {}, nextElementSibling: null };
@@ -333,6 +336,8 @@ describe('LazyImageAnalyzer', () => {
     describe('실제 시나리오', () => {
         test('스크롤 시나리오', async () => {
             jest.spyOn(analyzer, 'performAnalysis').mockResolvedValue();
+            // processQueue가 큐를 즉시 비우지 않도록 mock (enqueue 검증 목적)
+            jest.spyOn(analyzer, 'processQueue').mockImplementation(() => {});
 
             // 10개 게시글 생성
             const elements = [];

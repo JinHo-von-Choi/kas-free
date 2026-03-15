@@ -6,9 +6,10 @@
  */
 
 export class HashChecker {
-    constructor(serverUrl = 'https://nsfw.nerdvana.kr') {
-        this.name = 'Hash Checker';
+    constructor(serverUrl = 'https://nsfw.nerdvana.kr', apiKey = '') {
+        this.name   = 'Hash Checker';
         this.serverUrl = serverUrl;
+        this.apiKey = apiKey;
     }
 
     /**
@@ -32,11 +33,14 @@ export class HashChecker {
                 reporterId: reporterId
             };
 
+            const headers = { 'Content-Type': 'application/json' };
+            if (this.apiKey) {
+                headers['X-API-Key'] = this.apiKey;
+            }
+
             const response = await fetch(`${this.serverUrl}/api/check/hash`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers,
                 body: JSON.stringify(requestBody)
             });
 
@@ -168,7 +172,7 @@ export class HashChecker {
             }
 
             const data = await response.json();
-            return data.status === 'ok' && data.dbConnected === true;
+            return (data.status === 'ok' || data.status === 'healthy') && data.dbConnected === true;
         } catch (error) {
             console.error('[Kas-Free] Hash Checker 연결 테스트 실패:', error);
             return false;

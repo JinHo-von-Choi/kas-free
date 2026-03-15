@@ -352,6 +352,16 @@ export const DEFAULT_SETTINGS = {
     },
 
     // ========================================
+    // NSFW 서버 설정
+    // ========================================
+    /**
+     * nsfw.nerdvana.kr API 키
+     * - 해시 검사 (/api/check/hash), 이미지 검사 (/api/check) 등 모든 요청에 필요
+     * - X-API-Key 헤더로 전송
+     */
+    nsfwApiKey:           '',
+
+    // ========================================
     // 외부 AI API 설정
     // ========================================
     /**
@@ -512,5 +522,31 @@ export const DEFAULT_STATS = {
         safe:             0,
         caution:          0,
         danger:           0
+    }
+};
+
+/**
+ * 디시인사이드 fetch 공통 옵션
+ * 실제 브라우저 동작을 모방하여 봇 감지 및 차단 방지
+ * - credentials: 'omit' — SW는 chrome-extension:// origin이므로 dcinside 쿠키 전송 불가, 명시적 제거
+ * - referrer: gall.dcinside.com — 실제 사용자는 갤러리 목록에서 이동하므로 Referer 설정
+ */
+export const DC_FETCH_OPTIONS = {
+    credentials: 'omit',
+    referrer:    'https://gall.dcinside.com/',
+    headers: {
+        'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language':           'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control':             'max-age=0'
+    }
+};
+
+/** 이미지 전용 fetch 옵션 (Accept 헤더를 이미지 타입으로 재정의) */
+export const DC_IMAGE_FETCH_OPTIONS = {
+    ...DC_FETCH_OPTIONS,
+    headers: {
+        ...DC_FETCH_OPTIONS.headers,
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8'
     }
 };

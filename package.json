@@ -1,6 +1,6 @@
 {
   "name": "kas-free",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "카-스 프리 Chrome 확장 프로그램",
   "author": "최진호",
   "license": "MIT",
@@ -12,8 +12,12 @@
     "test:all": "npm test && npm run test:e2e"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.0",
     "@types/chrome": "^0.0.268",
     "@types/jest": "^29.5.12",
+    "babel-jest": "^30.3.0",
+    "cross-env": "^10.1.0",
     "jest": "^29.7.0",
     "jest-chrome": "^0.8.0",
     "jest-environment-jsdom": "^29.7.0",
@@ -21,18 +25,22 @@
   },
   "jest": {
     "testEnvironment": "jsdom",
-    "setupFiles": [
+    "setupFilesAfterEnv": [
       "./tests/setup.js"
     ],
     "testMatch": [
       "**/tests/unit/**/*.test.js"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/memen/"
     ],
     "collectCoverageFrom": [
       "src/**/*.js",
       "!src/lib/**",
       "!src/offscreen/**"
     ],
-    "coverageThresholds": {
+    "coverageThreshold": {
       "global": {
         "branches": 70,
         "functions": 70,

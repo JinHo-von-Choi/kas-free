@@ -45,13 +45,21 @@ export class FetchQueueManager {
 
         // 통계
         this.stats = {
-            totalRequests: 0,
+            totalRequests:    0,
             completedRequests: 0,
-            failedRequests: 0,
+            failedRequests:   0,
             currentQueueSize: 0,
-            avgWaitTime: 0,
-            totalWaitTime: 0
+            avgWaitTime:      0,
+            totalWaitTime:    0
         };
+
+        /** backoff 상태 */
+        this.paused             = false;
+        this.pauseUntil         = 0;
+        this.consecutiveFails   = 0;
+        this.consecutiveSuccess = 0;
+        this.baseDelayMs        = this.delayMs;
+        this.baseRPS            = this.requestsPerSecond;
 
         console.log(`[FetchQueueManager] 초기화: 초당 ${this.requestsPerSecond}개 (${this.delayMs}ms 간격)`);
     }
@@ -105,6 +113,13 @@ export class FetchQueueManager {
 
         while (this.queue.length > 0) {
             const item = this.queue.shift();
+
+            /** 일시 정지 상태 대기 (429 수신 시) */
+            if (this.paused && Date.now() < this.pauseUntil) {
+                await new Promise(r => setTimeout(r, this.pauseUntil - Date.now()));
+                this.paused = false;
+            }
+
             this.stats.currentQueueSize = this.queue.length;
 
             const startTime = Date.now();
@@ -130,6 +145,14 @@ export class FetchQueueManager {
                     `(소요: ${elapsed}ms)`
                 );
 
+                this.consecutiveSuccess++;
+                this.consecutiveFails   = 0;
+
+                /** 10회 연속 성공 시 원래 속도 복구 */
+                if (this.consecutiveSuccess >= 10 && this.delayMs > this.baseDelayMs) {
+                    this._restoreSpeed();
+                }
+
                 this.stats.completedRequests++;
                 item.resolve(result);
 
@@ -139,13 +162,22 @@ export class FetchQueueManager {
                     error.message
                 );
 
+                this.consecutiveFails++;
+                this.consecutiveSuccess = 0;
+
+                /** 3회 연속 실패 시 속도 절반으로 */
+                if (this.consecutiveFails >= 3) {
+                    this._halveSpeed();
+                    this.consecutiveFails = 0;
+                }
+
                 this.stats.failedRequests++;
                 item.reject(error);
             }
 
-            // 다음 요청 전 딜레이 (초당 3개 = 333ms)
+            // 다음 요청 전 딜레이 (큐 체증에 따라 동적 조정)
             if (this.queue.length > 0) {
-                await new Promise(resolve => setTimeout(resolve, this.delayMs));
+                await new Promise(resolve => setTimeout(resolve, this._computeEffectiveDelay()));
             }
         }
 
@@ -163,11 +195,58 @@ export class FetchQueueManager {
         return {
             ...this.stats,
             requestsPerSecond: this.requestsPerSecond,
-            delayMs: this.delayMs,
+            delayMs:           this.delayMs,
+            effectiveDelayMs:  this._computeEffectiveDelay(),
+            paused:            this.paused,
+            pauseUntil:        this.pauseUntil,
+            consecutiveFails:  this.consecutiveFails,
             successRate: this.stats.totalRequests > 0
                 ? ((this.stats.completedRequests / this.stats.totalRequests) * 100).toFixed(2) + '%'
                 : '0%'
         };
+    }
+
+    /**
+     * 외부에서 큐를 일시 정지한다 (429 수신 시 호출)
+     * @param {number} waitMs - 정지 시간 (ms)
+     */
+    triggerPause(waitMs) {
+        this.paused     = true;
+        this.pauseUntil = Date.now() + waitMs;
+        console.warn(`[FetchQueueManager] 일시 정지: ${waitMs}ms`);
+    }
+
+    /**
+     * 속도를 절반으로 줄인다 (최소 2000ms = 0.5/s)
+     */
+    _halveSpeed() {
+        const newDelay         = Math.min(this.delayMs * 2, 2000);
+        console.warn(`[FetchQueueManager] 속도 절감: ${this.delayMs}ms → ${newDelay}ms`);
+        this.delayMs           = newDelay;
+        this.requestsPerSecond = Math.max(1000 / newDelay, 0.5);
+    }
+
+    /**
+     * 원래 속도로 복구한다
+     */
+    _restoreSpeed() {
+        console.log(`[FetchQueueManager] 속도 복구: ${this.delayMs}ms → ${this.baseDelayMs}ms`);
+        this.delayMs            = this.baseDelayMs;
+        this.requestsPerSecond  = this.baseRPS;
+        this.consecutiveSuccess = 0;
+    }
+
+    /**
+     * 요청 간 딜레이를 반환한다
+     *
+     * 왜 큐 크기 기반 증가를 제거했는가?
+     * - 큐가 클수록 딜레이를 늘리면 대기 총시간이 기하급수적으로 증가
+     * - 30개 큐 × 1000ms = 30s → 모든 요청 타임아웃
+     * - 디시인사이드 차단 방지는 초당 3개(333ms) 유지로 충분
+     * @returns {number}
+     */
+    _computeEffectiveDelay() {
+        return this.delayMs;
     }
 
     /**

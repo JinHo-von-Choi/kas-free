@@ -2,7 +2,8 @@
  * 디시인사이드 게시판 파서
  * @author 최진호
  * @date 2026-01-31
- * @version 1.0.0
+ * @modified 2026-03-15
+ * @version 1.1.0
  * @remarks DOM 구조 변경 시 DC_SELECTORS만 수정하면 됨
  */
 
@@ -10,6 +11,7 @@
 const DC_SELECTORS = {
     POST_TABLE:           'table.gall_list',
     POST_ROW:             'tr.ub-content.us-post',
+    POST_ROW_VIEW:        'tr.ub-content',           // board/view 하단 리스트 (data-* 속성 없음)
     POST_ROW_WITH_IMAGE:  'tr.ub-content.us-post[data-type="icon_pic"], tr.ub-content.us-post[data-type="icon_recomimg"], tr.ub-content.us-post[data-type="icon_movie"]',
     TITLE_CELL:           'td.gall_tit',
     TITLE_LINK:           'td.gall_tit a[href*="board/view"]',
@@ -28,8 +30,8 @@ const DC_SELECTORS = {
 
 /** URL 패턴 */
 const DC_URL_PATTERNS = {
-    GALLERY_LIST: /gall\.dcinside\.com\/(mgallery\/|mini\/)?board\/lists/,
-    GALLERY_VIEW: /gall\.dcinside\.com\/(mgallery\/|mini\/)?board\/view/,
+    GALLERY_LIST: /gall\.dcinside\.(com|co\.kr)\/(mgallery\/|mini\/)?board\/lists/,
+    GALLERY_VIEW: /gall\.dcinside\.(com|co\.kr)\/(mgallery\/|mini\/)?board\/view/,
     VIEW_IMAGE:   /dcimg[0-9]\.dcinside\.(com|co\.kr)\/viewimage\.php/
 };
 
@@ -54,10 +56,14 @@ class DcParser {
     }
 
     /**
-     * 게시글 목록의 모든 게시글 Row를 가져온다
+     * 게시글 목록의 모든 게시글 Row를 가져온다.
+     * board/view 하단 리스트는 .us-post 클래스가 없으므로 별도 선택자를 사용한다.
      * @returns {NodeListOf<Element>}
      */
     getAllPostRows() {
+        if (this.isGalleryViewPage()) {
+            return document.querySelectorAll(DC_SELECTORS.POST_ROW_VIEW);
+        }
         return document.querySelectorAll(DC_SELECTORS.POST_ROW);
     }
 
@@ -70,7 +76,9 @@ class DcParser {
     }
 
     /**
-     * 게시글 Row에서 정보를 추출한다
+     * 게시글 Row에서 정보를 추출한다.
+     * board/view 하단 리스트처럼 data-no / data-type 속성이 없는 경우
+     * href ?no= 쿼리 및 em.icon_img 클래스로 fallback 처리한다.
      * @param {Element} row - 게시글 Row 엘리먼트
      * @returns {object|null}
      */
@@ -79,13 +87,30 @@ class DcParser {
             return null;
         }
 
-        const postNo    = row.dataset.no;
-        const postType  = row.dataset.type;
+        let postNo   = row.dataset.no;
+        let postType = row.dataset.type;
+
         const titleCell = row.querySelector(DC_SELECTORS.TITLE_CELL);
         const titleLink = row.querySelector(DC_SELECTORS.TITLE_LINK);
 
         if (!titleCell || !titleLink) {
             return null;
+        }
+
+        /** board/view 하단 리스트: data-no 없으면 href ?no= 쿼리에서 추출 */
+        if (!postNo) {
+            try {
+                postNo = new URL(titleLink.href).searchParams.get('no') ?? undefined;
+            } catch (_) {}
+        }
+
+        /** board/view 하단 리스트: data-type 없으면 em.icon_img 클래스로 추론 */
+        if (!postType) {
+            const iconEm     = row.querySelector('em.icon_img');
+            const candidates = ['icon_pic', 'icon_recomimg', 'icon_movie'];
+            if (iconEm) {
+                postType = candidates.find(cls => iconEm.classList.contains(cls));
+            }
         }
 
         const postUrl   = titleLink.href;
@@ -191,17 +216,28 @@ class DcParser {
      * @returns {Promise<string|null>}
      */
     async fetchOgImage(postUrl) {
-        try {
-            const response = await fetch(postUrl, {
-                credentials:    'include',
-                referrerPolicy: 'no-referrer'
-            });
+        const fetchOpts = { credentials: 'include', referrerPolicy: 'no-referrer' };
+        const postNo    = postUrl.match(/no=(\d+)/)?.[1] || 'unknown';
 
-            if (!response.ok) {
+        try {
+            /** FetchQueueManager를 통해 요청 (차단 방지). 미로드 시 직접 fetch */
+            const html = await (window.fetchQueueManager
+                ? window.fetchQueueManager.enqueue(
+                    async () => {
+                        const r = await fetch(postUrl, fetchOpts);
+                        return r.ok ? r.text() : null;
+                    },
+                    { postNo }
+                  )
+                : (async () => {
+                    const r = await fetch(postUrl, fetchOpts);
+                    return r.ok ? r.text() : null;
+                  })());
+
+            if (!html) {
                 return null;
             }
 
-            const html   = await response.text();
             const parser = new DOMParser();
             const doc    = parser.parseFromString(html, 'text/html');
 
@@ -230,17 +266,27 @@ class DcParser {
      * @returns {Promise<{text: string, imageCount: number, dcconCount: number}|null>}
      */
     async fetchPostContent(postUrl) {
-        try {
-            const response = await fetch(postUrl, {
-                credentials:    'include',
-                referrerPolicy: 'no-referrer'
-            });
+        const fetchOpts = { credentials: 'include', referrerPolicy: 'no-referrer' };
+        const postNo    = postUrl.match(/no=(\d+)/)?.[1] || 'unknown';
 
-            if (!response.ok) {
+        try {
+            /** FetchQueueManager를 통해 요청 (차단 방지). 미로드 시 직접 fetch */
+            const html = await (window.fetchQueueManager
+                ? window.fetchQueueManager.enqueue(
+                    async () => {
+                        const r = await fetch(postUrl, fetchOpts);
+                        return r.ok ? r.text() : null;
+                    },
+                    { postNo }
+                  )
+                : (async () => {
+                    const r = await fetch(postUrl, fetchOpts);
+                    return r.ok ? r.text() : null;
+                  })());
+
+            if (!html) {
                 return null;
             }
-
-            const html   = await response.text();
             const parser = new DOMParser();
             const doc    = parser.parseFromString(html, 'text/html');
 

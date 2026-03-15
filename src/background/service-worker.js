@@ -42,10 +42,10 @@ import {
     getStats,         // 통계 불러오기
     updateStats       // 통계 업데이트
 } from '../utils/storage.js';
-import { MESSAGE_TYPES, DEFAULT_SETTINGS } from '../utils/constants.js'; // 상수 정의
+import { MESSAGE_TYPES, DEFAULT_SETTINGS, DC_FETCH_OPTIONS, DC_IMAGE_FETCH_OPTIONS } from '../utils/constants.js'; // 상수 정의
 import { imageUrlToBase64 } from '../utils/imageEncoder.js';      // 이미지 URL → Base64 변환
 import { logError } from '../utils/errorHandler.js';              // 에러 로깅
-import { generateAllHashes } from '../utils/imageHash.js';        // 이미지 해시 생성
+import { generateAllHashes, generateAllHashesFromBlob } from '../utils/imageHash.js'; // 이미지 해시 생성
 
 // 최적화 모듈 (성능 향상용)
 import { AdvancedCacheManager } from './AdvancedCacheManager.js';   // LFU 캐싱 (자주 쓰는 데이터 빠르게 가져옴)
@@ -159,6 +159,9 @@ let memoryManager = null;
  */
 let fetchQueueManager = null;
 
+/** 통계 업데이트 직렬화 큐 — 경쟁 조건 방지 */
+let statsUpdateQueue = Promise.resolve();
+
 /**
  * ========================================
  * 초기화 함수
@@ -199,7 +202,8 @@ async function initialize() {
     // ========================================
     // 이미지의 "지문"을 만들어서 DB에 있는지 확인
     // 실제로 이미지를 전송하지 않아도 되므로 빠름 (1차 검증)
-    hashChecker = new HashChecker();
+    const nsfwApiKey = currentSettings.nsfwApiKey || '';
+    hashChecker = new HashChecker('https://nsfw.nerdvana.kr', nsfwApiKey);
     console.log('[Kas-Free] Hash Checker 초기화 완료');
 
     // ========================================
@@ -207,7 +211,7 @@ async function initialize() {
     // ========================================
     // 위험한 이미지를 판별하는 AI 서버와 통신하는 객체
     // baseUrl 등 설정을 포함
-    nsfwServer = new NsfwjsServerAnalyzer();
+    nsfwServer = new NsfwjsServerAnalyzer('https://nsfw.nerdvana.kr', nsfwApiKey);
     console.log('[Kas-Free] NSFW Server API 초기화 완료');
 
     // ========================================
@@ -348,28 +352,42 @@ async function initialize() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     let responded = false;  // sendResponse 호출 여부 추적
 
-    // 타임아웃 타이머 (30초)
-    const timeoutId = setTimeout(() => {
-        if (!responded) {
-            responded = true;
-            sendResponse({
-                error: '처리 시간 초과 (30초). 잠시 후 다시 시도해주세요.',
-                timeout: true,
-                userFriendly: true
-            });
-        }
-    }, 30000);
+    /**
+     * ANALYZE_IMAGE는 타임아웃을 적용하지 않는다
+     *
+     * 왜?
+     * - FetchQueueManager(초당 3개) + 다수 동시 요청 = 큐 대기 시간이 30s 초과 가능
+     * - 30s 타임아웃 후 sendResponse → Chrome이 SW 종료 → 큐 전체 소실
+     * - 큐 소실 시 해당 요청은 분석되지 않고 캐시에도 저장되지 않음
+     * - 대신 content.js의 30s 타임아웃(분석 요청 타임아웃)이 대기를 제어
+     *
+     * 그 외 메시지: 10초 타임아웃 (UI 응답성 유지)
+     */
+    const isAnalysis  = message.type === MESSAGE_TYPES.ANALYZE_IMAGE;
+    const timeoutMs   = isAnalysis ? null : 10000;
+    const timeoutId   = timeoutMs
+        ? setTimeout(() => {
+            if (!responded) {
+                responded = true;
+                sendResponse({
+                    error: '처리 시간 초과. 잠시 후 다시 시도해주세요.',
+                    timeout: true,
+                    userFriendly: true
+                });
+            }
+        }, timeoutMs)
+        : null;
 
     // 실제 메시지 처리
     handleMessage(message, sender, (response) => {
         if (!responded) {
             responded = true;
-            clearTimeout(timeoutId);
+            if (timeoutId) clearTimeout(timeoutId);
             sendResponse(response);
         }
     });
 
-    return true;  // 🔥 필수! 비동기 응답 허용
+    return true;  // 필수: 비동기 응답 허용
 });
 
 /**
@@ -477,7 +495,10 @@ async function handleMessage(message, sender, sendResponse) {
 
             // 통계 업데이트
             case MESSAGE_TYPES.UPDATE_STATS:
-                await updateStats(message.signalType);
+                statsUpdateQueue = statsUpdateQueue
+                    .then(() => updateStats(message.signalType))
+                    .catch((err) => console.error('[Kas-Free] 통계 업데이트 실패:', err));
+                await statsUpdateQueue;
                 sendResponse({ success: true });
                 break;
 
@@ -792,16 +813,16 @@ async function analyzeImage(imageUrl, pageUrl = null) {
     }
 
     // ========================================
-    // 1차 검증 실패 → 안전(safe)으로 간주
+    // 1차 검증 실패 → 판정 불가(error)로 처리
     // ========================================
     // 해시 검사가 실패한 경우 (서버 오류, Unauthorized 등)
-    // - DB에 등록된 위험 이미지가 아님 (매칭 안 됨)
-    // - 안전(safe)으로 간주하여 초록 신호등 표시
-    // - 사용자가 의심되면 "AI 검사" 버튼으로 수동 검사 가능
-    console.log('[Kas-Free] 1차 검증 실패, 안전(safe)으로 간주');
+    // - 백엔드 장애 시 "초록불"이 되는 fail-open 구조 방지
+    // - error 상태로 반환하여 사용자에게 "검증 불가" 표시
+    // - 사용자가 직접 "AI 검사" 버튼으로 수동 검사 가능
+    console.log('[Kas-Free] 1차 검증 실패 — 서버 오류, 판정 불가(error)로 처리');
 
-    const safeFallbackResult = {
-        riskScore: 0,
+    const errorFallbackResult = {
+        riskScore: -1,
         detailedScores: {
             gore: 0,
             violence: 0,
@@ -826,11 +847,42 @@ async function analyzeImage(imageUrl, pageUrl = null) {
             nsfw_porn: 0,
             nsfw_sexy: 0
         },
-        source: 'hash-check-failed',
+        source: 'server-error',
         matched: false
     };
 
-    return buildFinalResult(safeFallbackResult, null, 'safe');
+    return buildFinalResult(errorFallbackResult, null, 'error');
+}
+
+/**
+ * FetchQueueManager를 통해 이미지를 1회 fetch하고 모든 해시를 생성한다.
+ * - 큐를 통한 순차 처리로 디시인사이드 차단 방지
+ * - Blob 공유로 동일 이미지 2회 fetch 방지
+ * @param {string} imageUrl - 이미지 URL
+ * @returns {Promise<{phash: string, dhash: string, ahash: string}>}
+ */
+async function generateHashesViaQueue(imageUrl) {
+    const blob = await fetchQueueManager.enqueue(
+        async () => {
+            const response = await fetch(imageUrl, DC_IMAGE_FETCH_OPTIONS);
+
+            if (response.status === 429) {
+                const retryAfter = response.headers.get('Retry-After');
+                const waitMs     = retryAfter ? parseInt(retryAfter, 10) * 1000 : 10000;
+                fetchQueueManager.triggerPause(waitMs);
+                throw new Error(`[Kas-Free] 429 차단 — ${waitMs}ms 큐 정지`);
+            }
+
+            if (!response.ok) {
+                throw new Error(`[Kas-Free] 이미지 fetch 실패: ${response.status}`);
+            }
+
+            return response.blob();
+        },
+        { postNo: imageUrl }
+    );
+
+    return generateAllHashesFromBlob(blob);
 }
 
 /**
@@ -855,9 +907,9 @@ async function analyzeImageWithHash(imageUrl) {
         // reporterId 가져오기
         const reporterId = await getOrCreateReporterId();
 
-        // 이미지 해시 생성 (WebWorker 사용 또는 폴백)
+        // 이미지 해시 생성 (FetchQueue를 통한 순차 처리 — 차단 방지)
         console.log('[Kas-Free] 이미지 해싱 시작:', imageUrl);
-        const hashes = await generateHashesAsync(imageUrl);
+        const hashes = await generateHashesViaQueue(imageUrl);
         console.log('[Kas-Free] 해시 생성 완료:', hashes);
 
         const hashElapsed = performanceMonitor.endTimer(hashTimerId);
@@ -922,10 +974,7 @@ async function generateHashesWithWorker(imageUrl) {
 
         try {
             // 이미지를 Blob으로 다운로드
-            const response = await fetch(imageUrl, {
-                credentials: 'include',
-                referrerPolicy: 'no-referrer'
-            });
+            const response = await fetch(imageUrl, DC_IMAGE_FETCH_OPTIONS);
 
             if (!response.ok) {
                 throw new Error(`이미지 fetch 실패: ${response.status}`);
@@ -1110,10 +1159,20 @@ async function fetchPostImage(postUrl) {
         async () => {
             // 실제 fetch 로직
             try {
-                const response = await fetch(postUrl, {
-                    credentials: 'include',
-                    referrerPolicy: 'no-referrer'
-                });
+                const response = await fetch(postUrl, DC_FETCH_OPTIONS);
+
+                if (response.status === 429) {
+                    const retryAfter = response.headers.get('Retry-After');
+                    const waitMs     = retryAfter ? parseInt(retryAfter, 10) * 1000 : 10000;
+                    fetchQueueManager.triggerPause(waitMs);
+                    console.warn('[Kas-Free] 429 차단 — 큐 정지:', waitMs, 'ms');
+                    return null;
+                }
+
+                if (response.status === 503) {
+                    console.warn('[Kas-Free] 503 일시 오류 — 재시도 없이 건너뜀');
+                    return null;
+                }
 
                 if (!response.ok) {
                     console.log('[Kas-Free] fetch 실패:', response.status);
@@ -1167,8 +1226,19 @@ async function handleUpdateSettings(newSettings) {
     cacheManager.updateSettings(newSettings);
     aiVerificationHandler.updateSettings(newSettings);
 
-    // 모든 탭에 설정 변경 알림
-    const tabs = await chrome.tabs.query({ url: 'https://gall.dcinside.com/*' });
+    // NSFW API 키 변경 시 분석기 재초기화
+    const updatedApiKey = newSettings.nsfwApiKey || '';
+    if (hashChecker.apiKey !== updatedApiKey) {
+        hashChecker.apiKey  = updatedApiKey;
+        nsfwServer.apiKey   = updatedApiKey;
+    }
+
+    // 모든 탭에 설정 변경 알림 (.com + .co.kr 동시 처리)
+    const [comTabs, coKrTabs] = await Promise.all([
+        chrome.tabs.query({ url: 'https://gall.dcinside.com/*' }),
+        chrome.tabs.query({ url: 'https://gall.dcinside.co.kr/*' })
+    ]);
+    const tabs = [...comTabs, ...coKrTabs];
     for (const tab of tabs) {
         try {
             await chrome.tabs.sendMessage(tab.id, {
@@ -1189,8 +1259,12 @@ async function handleToggleExtension(enabled) {
     await updateSettings({ enabled });
     currentSettings.enabled = enabled;
 
-    // 모든 탭에 알림
-    const tabs = await chrome.tabs.query({ url: 'https://gall.dcinside.com/*' });
+    // 모든 탭에 알림 (.com + .co.kr 동시 처리)
+    const [comTabs, coKrTabs] = await Promise.all([
+        chrome.tabs.query({ url: 'https://gall.dcinside.com/*' }),
+        chrome.tabs.query({ url: 'https://gall.dcinside.co.kr/*' })
+    ]);
+    const tabs = [...comTabs, ...coKrTabs];
     for (const tab of tabs) {
         try {
             await chrome.tabs.sendMessage(tab.id, {
@@ -1289,7 +1363,10 @@ function createContextMenus() {
             id: 'kas-free-restore',
             title: '🔓 원본 이미지 보기',
             contexts: ['image'],
-            documentUrlPatterns: ['https://gall.dcinside.com/*']
+            documentUrlPatterns: [
+                'https://gall.dcinside.com/*',
+                'https://gall.dcinside.co.kr/*'
+            ]
         });
 
         // 화이트리스트 등록 요청 (잘못 차단된 이미지)
@@ -1297,7 +1374,10 @@ function createContextMenus() {
             id: 'kas-free-whitelist',
             title: '✅ 화이트리스트 등록 요청',
             contexts: ['image'],
-            documentUrlPatterns: ['https://gall.dcinside.com/*']
+            documentUrlPatterns: [
+                'https://gall.dcinside.com/*',
+                'https://gall.dcinside.co.kr/*'
+            ]
         });
 
         // 구분선
@@ -1305,7 +1385,10 @@ function createContextMenus() {
             id: 'kas-free-separator',
             type: 'separator',
             contexts: ['image'],
-            documentUrlPatterns: ['https://gall.dcinside.com/*']
+            documentUrlPatterns: [
+                'https://gall.dcinside.com/*',
+                'https://gall.dcinside.co.kr/*'
+            ]
         });
 
         // 부모 메뉴 (모든 사이트에서 표시)

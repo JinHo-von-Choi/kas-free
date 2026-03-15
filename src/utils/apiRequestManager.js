@@ -55,7 +55,7 @@ export class ApiRequestManager {
      * @param {number} debounceMs - Debounce 시간 (ms), 기본 300ms
      * @returns {Promise<object>}
      */
-    async requestImageAnalysis(postNo, requestFn, debounceMs = 300) {
+    requestImageAnalysis(postNo, requestFn, debounceMs = 300) {
         this.stats.total++;
 
         // ========================================
@@ -137,7 +137,7 @@ export class ApiRequestManager {
      * @param {number} debounceMs - Debounce 시간 (ms), 기본 500ms
      * @returns {Promise<object>}
      */
-    async requestAIVerification(postNo, requestFn, debounceMs = 500) {
+    requestAIVerification(postNo, requestFn, debounceMs = 500) {
         // AI 검증은 더 긴 Debounce (사용자가 버튼을 여러 번 클릭할 수 있음)
         return this.requestImageAnalysis(postNo, requestFn, debounceMs);
     }
@@ -154,20 +154,22 @@ export class ApiRequestManager {
      * @returns {boolean} 취소 성공 여부
      */
     cancel(postNo) {
+        let canceled = false;
+
         if (this.pendingRequests.has(postNo)) {
             this.pendingRequests.delete(postNo);
             console.log(`[ApiRequestManager] 요청 취소: ${postNo}`);
-            return true;
+            canceled = true;
         }
 
         if (this.debounceTimers.has(postNo)) {
             clearTimeout(this.debounceTimers.get(postNo));
             this.debounceTimers.delete(postNo);
             console.log(`[ApiRequestManager] Debounce 취소: ${postNo}`);
-            return true;
+            canceled = true;
         }
 
-        return false;
+        return canceled;
     }
 
     /**

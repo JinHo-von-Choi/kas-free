@@ -253,6 +253,16 @@ export function normalizeAIResponse(response) {
  * @returns {object} { valid: boolean, errors: string[], data: object, normalized: boolean }
  */
 export function validateAndNormalizeAIResponse(response) {
+    // null/undefined는 정규화 불가 → 즉시 기본 응답 반환
+    if (!response || typeof response !== 'object') {
+        return {
+            valid: false,
+            errors: ['AI 응답이 null 또는 객체가 아닙니다.'],
+            data: getDefaultResponse(),
+            normalized: true
+        };
+    }
+
     // 1. 검증
     const validation = validateAIResponse(response);
 

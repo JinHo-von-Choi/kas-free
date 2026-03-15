@@ -35,6 +35,11 @@ import { DEFAULT_SETTINGS } from './constants.js';
  * @returns {object} 검증된 설정
  */
 export function validateSettings(settings) {
+    // null/undefined 입력 방어
+    if (!settings || typeof settings !== 'object') {
+        return { ...DEFAULT_SETTINGS };
+    }
+
     // 기본값과 병합 (누락된 필드 보완)
     const validated = { ...DEFAULT_SETTINGS };
 

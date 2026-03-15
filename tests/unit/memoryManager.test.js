@@ -31,7 +31,8 @@ describe('MemoryManager', () => {
 
         // Performance Memory Mock
         Object.defineProperty(global.performance, 'memory', {
-            writable: true,
+            configurable: true,
+            writable:     true,
             value: {
                 usedJSHeapSize: 50 * 1024 * 1024,   // 50MB
                 jsHeapSizeLimit: 100 * 1024 * 1024  // 100MB

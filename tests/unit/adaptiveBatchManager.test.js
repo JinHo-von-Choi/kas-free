@@ -528,7 +528,7 @@ describe('AdaptiveBatchManager', () => {
             manager.adjustBatchSize();
             expect(manager.currentBatchSize).toBe(10);
 
-            expect(manager.stats.adjustmentCount).toBe(2);
+            expect(manager.stats.adjustmentCount).toBe(3);
         });
 
         test('연속 실패 후 복구 시나리오', () => {

@@ -62,11 +62,26 @@ npm run test:all
 
 ## 테스트 구조
 
-### 단위 테스트 (`tests/unit/`)
+### 단위 테스트 (`tests/unit/`) — 18개 파일, 403개 테스트
 
-- `CacheManager.test.js`: 캐시 관리 로직 테스트
-- `PerformanceMonitor.test.js`: 성능 모니터링 로직 테스트
-- `HashChecker.test.js`: 해시 기반 이미지 검사 로직 테스트
+| 파일 | 대상 모듈 | 주요 검증 항목 |
+|------|-----------|----------------|
+| `CacheManager.test.js` | `CacheManager.js` | 캐시 CRUD, TTL, LFU 정책 |
+| `PerformanceMonitor.test.js` | `PerformanceMonitor.js` | 분석 시간, 캐시 히트율, API 통계 |
+| `HashChecker.test.js` | `hashChecker.js` | pHash 해밍 거리 판정 |
+| `thresholds.test.js` | `constants.js` | 위험도 판정 기준 (38개) |
+| `errorHandler.test.js` | `errorHandler.js` | ApiError, 에러 메시지 변환, 민감정보 마스킹 |
+| `messageHandler.test.js` | `service-worker.js` | 메시지 핸들러 라우팅 |
+| `aiResponseValidator.test.js` | `aiResponseValidator.js` | AI 응답 정규화, 유효성 검사 |
+| `memoryManagement.test.js` | 메모리 관리 통합 | 메모리 누수 방지, 리소스 정리 |
+| `dbOptimizer.test.js` | `dbBatchOptimizer.js` | 배치 조회, Write coalescing |
+| `adaptiveBatchManager.test.js` | `adaptiveBatchManager.js` | 네트워크별 배치 크기 조정 |
+| `apiRequestManager.test.js` | `apiRequestManager.js` | 중복 요청 차단, Debounce, 취소 |
+| `settingsValidator.test.js` | `settingsValidator.js` | 설정값 자동 교정, 임계값 검증 |
+| `memoryManager.test.js` | `memoryManager.js` | Cache Storage 정리, 메모리 압박 GC |
+| `lazyImageAnalyzer.test.js` | `lazyImageAnalyzer.js` | IntersectionObserver, 우선순위 큐 |
+| `ApiClient.test.js` | `ApiClient.js` | 타임아웃, Exponential Backoff 재시도 |
+| `applyUserSensitivity.test.js` | `applyUserSensitivity.js` | 사용자 민감도 적용, 카테고리별 점수 조정 |
 
 ### E2E 테스트 (`tests/e2e/`)
 

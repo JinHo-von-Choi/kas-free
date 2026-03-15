@@ -51,20 +51,22 @@ describe('ApiRequestManager', () => {
             // 첫 번째 요청
             const promise1 = manager.requestImageAnalysis('123', requestFn, 100);
 
-            // Debounce 대기
+            // Debounce 대기 (100ms 타이머 발화, executeRequest 마이크로태스크 큐에 적재)
             jest.advanceTimersByTime(100);
 
-            // 두 번째 요청 (진행 중)
+            // 두 번째 요청 (진행 중) - pendingRequests에 있으므로 deduplicated
             const promise2 = manager.requestImageAnalysis('123', requestFn, 100);
 
             // 같은 Promise여야 함
             expect(promise1).toBe(promise2);
             expect(manager.stats.deduplicated).toBe(1);
 
-            // requestFn은 한 번만 호출
-            jest.advanceTimersByTime(500);
-            await promise1;
+            // runAllTimersAsync: 마이크로태스크와 타이머를 교차 처리
+            // (executeRequest 재개 → requestFn 500ms 타이머 생성 → 발화 순서 보장)
+            await jest.runAllTimersAsync();
+            const result = await promise1;
 
+            expect(result).toEqual({ status: 'safe' });
             expect(requestFn).toHaveBeenCalledTimes(1);
         });
 
@@ -74,11 +76,11 @@ describe('ApiRequestManager', () => {
             // 첫 번째 요청
             manager.requestImageAnalysis('123', requestFn, 300);
 
-            // 100ms 후 두 번째 요청
+            // 100ms 후 두 번째 요청 (pendingRequests에 이미 있으므로 deduplicated로 처리됨)
             jest.advanceTimersByTime(100);
             const promise = manager.requestImageAnalysis('123', requestFn, 300);
 
-            expect(manager.stats.debounced).toBe(1);
+            expect(manager.stats.deduplicated).toBe(1);
 
             // 300ms 후 실행 (마지막 요청 기준)
             jest.advanceTimersByTime(300);
@@ -157,7 +159,8 @@ describe('ApiRequestManager', () => {
 
             const promise2 = manager.requestAIVerification('123', requestFn);
 
-            expect(manager.stats.debounced).toBe(1);
+            // pendingRequests에 이미 있으므로 deduplicated로 처리됨
+            expect(manager.stats.deduplicated).toBe(1);
 
             jest.advanceTimersByTime(500);
             await Promise.all([promise1, promise2]);
@@ -336,15 +339,19 @@ describe('ApiRequestManager', () => {
     describe('실제 시나리오', () => {
         test('빠른 스크롤 시나리오', async () => {
             const requestFn = jest.fn().mockResolvedValue({ status: 'safe' });
+            const promises = [];
 
             // 사용자가 빠르게 스크롤 (100개 게시글)
             for (let i = 1; i <= 100; i++) {
-                manager.requestImageAnalysis(String(i), requestFn, 100);
+                promises.push(manager.requestImageAnalysis(String(i), requestFn, 100));
                 jest.advanceTimersByTime(10);  // 10ms마다 요청
             }
 
             // 100ms 대기 (Debounce)
             jest.advanceTimersByTime(100);
+
+            // 마이크로태스크 flush (async executeRequest의 requestFn 호출 대기)
+            await Promise.all(promises);
 
             // 각 게시글당 한 번만 호출되어야 함
             expect(requestFn).toHaveBeenCalledTimes(100);
@@ -355,15 +362,19 @@ describe('ApiRequestManager', () => {
 
         test('중복 클릭 시나리오', async () => {
             const requestFn = jest.fn().mockResolvedValue({ status: 'safe' });
+            const promises = [];
 
             // 사용자가 신호등을 5번 연타
             for (let i = 0; i < 5; i++) {
-                manager.requestImageAnalysis('123', requestFn, 300);
+                promises.push(manager.requestImageAnalysis('123', requestFn, 300));
                 jest.advanceTimersByTime(50);
             }
 
             // 300ms 대기
             jest.advanceTimersByTime(300);
+
+            // 마이크로태스크 flush
+            await Promise.all(promises);
 
             // 한 번만 호출되어야 함
             expect(requestFn).toHaveBeenCalledTimes(1);

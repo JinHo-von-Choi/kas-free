@@ -115,22 +115,37 @@ export async function getStats() {
             scanned:  0,
             safe:     0,
             caution:  0,
-            danger:   0
+            danger:   0,
+            reported: 0
         };
         await setStorage(STORAGE_KEYS.STATS, stats);
     }
+
+    /** 하위 호환: reported 필드 누락 보정 */
+    stats.today.reported = stats.today.reported ?? 0;
+    stats.total.reported = stats.total.reported ?? 0;
 
     return stats;
 }
 
 /**
  * 통계를 업데이트한다
- * @param {string} signalType - 신호등 타입 (safe, caution, danger)
+ * @param {string|{reported: number}} signalType - 신호등 타입 (safe, caution, danger) 또는 신고 객체
  * @returns {Promise<boolean>}
  */
 export async function updateStats(signalType) {
     const stats = await getStats();
 
+    /** 신고 카운트 업데이트 경로 */
+    if (typeof signalType === 'object' && signalType !== null) {
+        if (signalType.reported) {
+            stats.today.reported++;
+            stats.total.reported++;
+        }
+        return setStorage(STORAGE_KEYS.STATS, stats);
+    }
+
+    /** 스캔 카운트 업데이트 경로 */
     stats.today.scanned++;
     stats.total.scanned++;
 
@@ -164,8 +179,7 @@ export async function getCache() {
  */
 export async function getCachedResult(imageUrl, cacheDuration) {
     const cache      = await getCache();
-    const cacheKey   = hashString(imageUrl);
-    const cachedData = cache[cacheKey];
+    const cachedData = cache[imageUrl];
 
     if (!cachedData) {
         return null;
@@ -188,10 +202,9 @@ export async function getCachedResult(imageUrl, cacheDuration) {
  * @returns {Promise<boolean>}
  */
 export async function setCachedResult(imageUrl, result) {
-    const cache    = await getCache();
-    const cacheKey = hashString(imageUrl);
+    const cache = await getCache();
 
-    cache[cacheKey] = {
+    cache[imageUrl] = {
         timestamp: Date.now(),
         result:    result
     };
@@ -225,21 +238,6 @@ function getTodayDateString() {
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day   = String(now.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
-}
-
-/**
- * 문자열을 해시한다 (캐시 키 생성용)
- * @param {string} str - 해시할 문자열
- * @returns {string}
- */
-function hashString(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash       = ((hash << 5) - hash) + char;
-        hash       = hash & hash;
-    }
-    return hash.toString(36);
 }
 
 /**

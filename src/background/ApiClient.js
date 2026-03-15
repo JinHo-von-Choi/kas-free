@@ -257,7 +257,7 @@ export class ApiClient {
             // 왜 성공한 것만?
             // - 실패(에러)한 요청은 통계에 포함하면 안 됨
             // - 평균을 왜곡시킴
-            if (response.ok && this.timeoutManager) {
+            if (response?.ok && this.timeoutManager) {
                 this.timeoutManager.recordResponseTime(endpoint, responseTime);
 
                 // ========================================

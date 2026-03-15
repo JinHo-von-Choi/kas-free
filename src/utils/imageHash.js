@@ -2,8 +2,27 @@
  * 이미지 해싱 유틸리티
  * @author 최진호
  * @date 2026-01-31
+ * @modified 2026-03-15
  * @remarks dHash (Difference Hash) 알고리즘 구현 - Service Worker 호환
+ *          Blob 기반 API 추가 (generateDHashFromBlob, generateAHashFromBlob, generateAllHashesFromBlob)
  */
+
+/**
+ * Blob에서 dHash를 생성한다 (fetch 없이 Blob 직접 수신)
+ * @param {Blob} blob - 이미지 Blob
+ * @returns {Promise<string>} 16자 hex 해시
+ */
+export async function generateDHashFromBlob(blob) {
+    try {
+        const imageBitmap = await createImageBitmap(blob);
+        const hash        = computeDHash(imageBitmap);
+        imageBitmap.close();
+        return hash;
+    } catch (error) {
+        console.error('[Kas-Free] dHash(Blob) 생성 실패:', error);
+        throw error;
+    }
+}
 
 /**
  * 이미지 URL에서 dHash를 생성한다
@@ -12,23 +31,12 @@
  */
 export async function generateDHash(imageUrl) {
     try {
-        // fetch로 이미지를 Blob으로 가져오기
         const response = await fetch(imageUrl);
         if (!response.ok) {
             throw new Error(`이미지 fetch 실패: ${response.status}`);
         }
         const blob = await response.blob();
-
-        // Blob을 ImageBitmap으로 변환
-        const imageBitmap = await createImageBitmap(blob);
-
-        // dHash 계산
-        const hash = computeDHash(imageBitmap);
-
-        // ImageBitmap 해제
-        imageBitmap.close();
-
-        return hash;
+        return generateDHashFromBlob(blob);
     } catch (error) {
         console.error('[Kas-Free] dHash 생성 실패:', error);
         throw error;
@@ -101,29 +109,35 @@ export async function generatePHash(imageUrl) {
 }
 
 /**
+ * Blob에서 aHash를 생성한다 (fetch 없이 Blob 직접 수신)
+ * @param {Blob} blob - 이미지 Blob
+ * @returns {Promise<string>} 16자 hex 해시
+ */
+export async function generateAHashFromBlob(blob) {
+    try {
+        const imageBitmap = await createImageBitmap(blob);
+        const hash        = computeAHash(imageBitmap);
+        imageBitmap.close();
+        return hash;
+    } catch (error) {
+        console.error('[Kas-Free] aHash(Blob) 생성 실패:', error);
+        throw error;
+    }
+}
+
+/**
  * aHash를 생성한다 (Average Hash)
  * @param {string} imageUrl - 이미지 URL
  * @returns {Promise<string>} 16자 hex 해시
  */
 export async function generateAHash(imageUrl) {
     try {
-        // fetch로 이미지를 Blob으로 가져오기
         const response = await fetch(imageUrl);
         if (!response.ok) {
             throw new Error(`이미지 fetch 실패: ${response.status}`);
         }
         const blob = await response.blob();
-
-        // Blob을 ImageBitmap으로 변환
-        const imageBitmap = await createImageBitmap(blob);
-
-        // aHash 계산
-        const hash = computeAHash(imageBitmap);
-
-        // ImageBitmap 해제
-        imageBitmap.close();
-
-        return hash;
+        return generateAHashFromBlob(blob);
     } catch (error) {
         console.error('[Kas-Free] aHash 생성 실패:', error);
         throw error;
@@ -181,16 +195,34 @@ function computeAHash(imageBitmap) {
 }
 
 /**
+ * Blob에서 모든 해시를 생성한다 (1회 fetch로 dHash + aHash 공유)
+ * @param {Blob} blob - 이미지 Blob
+ * @returns {Promise<{phash: string|null, dhash: string, ahash: string}>}
+ */
+export async function generateAllHashesFromBlob(blob) {
+    const [dhash, ahash] = await Promise.all([
+        generateDHashFromBlob(blob),
+        generateAHashFromBlob(blob)
+    ]);
+    return { phash: null, dhash, ahash };
+}
+
+/**
  * 모든 해시를 생성한다
  * @param {string} imageUrl - 이미지 URL
- * @returns {Promise<object>} { phash, dhash, ahash }
+ * @returns {Promise<{phash: string, dhash: string, ahash: string}>}
  */
 export async function generateAllHashes(imageUrl) {
     try {
-        // 병렬로 생성
+        // 1회 fetch 후 Blob을 두 해시 함수에 공유
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            throw new Error(`이미지 fetch 실패: ${response.status}`);
+        }
+        const blob       = await response.blob();
         const [dhash, ahash] = await Promise.all([
-            generateDHash(imageUrl),
-            generateAHash(imageUrl)
+            generateDHashFromBlob(blob),
+            generateAHashFromBlob(blob)
         ]);
 
         return {
