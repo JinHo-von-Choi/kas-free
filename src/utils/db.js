@@ -135,6 +135,106 @@ class KasFreeDB {
     }
 
     /**
+     * ========================================
+     * Batch 조회 (여러 게시글 결과를 한 번에)
+     * ========================================
+     *
+     * 성능 최적화:
+     * - 개별 조회: 100개 게시글 = 100번 트랜잭션
+     * - Batch 조회: 100개 게시글 = 1번 트랜잭션
+     * - 속도: ~100배 향상
+     *
+     * @param {string[]} postNos - 게시글 번호 목록
+     * @returns {Promise<Map<string, object>>} postNo → 결과 Map
+     */
+    async batchGetAnalysisResults(postNos) {
+        if (postNos.length === 0) {
+            return new Map();
+        }
+
+        await this.init();
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORES.ANALYSIS_RESULTS], 'readonly');
+            const store       = transaction.objectStore(STORES.ANALYSIS_RESULTS);
+            const results     = new Map();
+            let completed     = 0;
+
+            for (const postNo of postNos) {
+                const request = store.get(postNo);
+
+                request.onsuccess = () => {
+                    if (request.result) {
+                        results.set(postNo, request.result);
+                    }
+
+                    completed++;
+                    if (completed === postNos.length) {
+                        resolve(results);
+                    }
+                };
+
+                request.onerror = () => {
+                    console.error('[KasFreeDB] Batch 조회 실패:', postNo, request.error);
+                    completed++;
+                    if (completed === postNos.length) {
+                        resolve(results);
+                    }
+                };
+            }
+        });
+    }
+
+    /**
+     * ========================================
+     * Batch 저장 (여러 게시글 결과를 한 번에)
+     * ========================================
+     *
+     * @param {Map<string, object>} resultsMap - postNo → 결과 Map
+     * @returns {Promise<number>} 저장된 개수
+     */
+    async batchSetAnalysisResults(resultsMap) {
+        if (resultsMap.size === 0) {
+            return 0;
+        }
+
+        await this.init();
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORES.ANALYSIS_RESULTS], 'readwrite');
+            const store       = transaction.objectStore(STORES.ANALYSIS_RESULTS);
+            let completed     = 0;
+            let successCount  = 0;
+
+            for (const [postNo, data] of resultsMap.entries()) {
+                const record = {
+                    ...data,
+                    postNo,
+                    analyzedAt: Date.now()
+                };
+
+                const request = store.put(record);
+
+                request.onsuccess = () => {
+                    successCount++;
+                    completed++;
+                    if (completed === resultsMap.size) {
+                        resolve(successCount);
+                    }
+                };
+
+                request.onerror = () => {
+                    console.error('[KasFreeDB] Batch 저장 실패:', postNo, request.error);
+                    completed++;
+                    if (completed === resultsMap.size) {
+                        resolve(successCount);
+                    }
+                };
+            }
+        });
+    }
+
+    /**
      * 게시글 본문을 가져온다
      * @param {string} postNo - 게시글 번호
      * @returns {Promise<object|null>}

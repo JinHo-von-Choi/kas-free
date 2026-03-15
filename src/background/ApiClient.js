@@ -23,6 +23,7 @@
 
 import { AI_ANALYSIS_PROMPT } from '../utils/constants.js';
 import { AdaptiveTimeoutManager } from './AdaptiveTimeoutManager.js';
+import { validateAndNormalizeAIResponse } from '../utils/aiResponseValidator.js';
 
 /**
  * ========================================
@@ -178,6 +179,13 @@ export class ApiClient {
         const controller = new AbortController();
 
         // ========================================
+        // 타임아웃 상태 플래그 (경합 조건 방지)
+        // ========================================
+        // 문제점: fetch 완료와 setTimeout 실행이 동시에 일어날 수 있음
+        // 해결책: timedOut 플래그로 타임아웃 여부를 명확하게 추적
+        let timedOut = false;
+
+        // ========================================
         // 엔드포인트별 동적 타임아웃 계산
         // ========================================
         // 왜 엔드포인트별로?
@@ -197,10 +205,13 @@ export class ApiClient {
             : this.timeout;                              // 폴백: 고정 30초
 
         // ========================================
-        // 타임아웃 타이머 설정
+        // 타임아웃 타이머 설정 (경합 조건 방지)
         // ========================================
         // dynamicTimeout 시간 후 자동으로 controller.abort() 실행
-        const timeoutId = setTimeout(() => controller.abort(), dynamicTimeout);
+        const timeoutId = setTimeout(() => {
+            timedOut = true;               // 타임아웃 플래그 설정
+            controller.abort();            // fetch 중단
+        }, dynamicTimeout);
 
         // 시작 시간 기록 (성능 측정용)
         const startTime = performance.now();
@@ -219,7 +230,23 @@ export class ApiClient {
             // ========================================
             // 성공: 타이머 해제
             // ========================================
-            clearTimeout(timeoutId);  // 이미 완료되었으므로 타이머 제거
+            clearTimeout(timeoutId);  // 타이머 제거
+
+            // ========================================
+            // 경합 조건 체크: 타임아웃 후 응답 도착
+            // ========================================
+            // 시나리오:
+            // 1. setTimeout 실행 (timedOut = true, abort())
+            // 2. 거의 동시에 fetch 완료
+            // 3. 응답은 왔지만 이미 타임아웃됨
+            // → 응답을 사용하면 안 됨 (데이터 일관성 문제)
+            if (timedOut) {
+                throw new ApiError(
+                    `요청이 타임아웃 후 완료되었습니다 (${Math.round(dynamicTimeout)}ms). 재시도가 필요합니다.`,
+                    408,      // HTTP 408 Timeout
+                    true      // 재시도 가능
+                );
+            }
 
             // 응답 시간 계산 (밀리초)
             const responseTime = performance.now() - startTime;
@@ -230,7 +257,7 @@ export class ApiClient {
             // 왜 성공한 것만?
             // - 실패(에러)한 요청은 통계에 포함하면 안 됨
             // - 평균을 왜곡시킴
-            if (response.ok && this.timeoutManager) {
+            if (response?.ok && this.timeoutManager) {
                 this.timeoutManager.recordResponseTime(endpoint, responseTime);
 
                 // ========================================
@@ -254,11 +281,11 @@ export class ApiClient {
             // ========================================
             clearTimeout(timeoutId);  // 타이머 정리
 
-            // AbortError: 타임아웃으로 중단됨
-            if (error.name === 'AbortError') {
+            // AbortError 또는 timedOut 플래그: 타임아웃으로 중단됨
+            if (error.name === 'AbortError' || timedOut) {
                 const elapsed = performance.now() - startTime;
                 throw new ApiError(
-                    `요청 시간이 초과되었습니다 (${Math.round(dynamicTimeout)}ms). 잠시 후 다시 시도해주세요.`,
+                    `요청 시간이 초과되었습니다 (${Math.round(dynamicTimeout)}ms, 경과: ${Math.round(elapsed)}ms). 잠시 후 다시 시도해주세요.`,
                     408,      // HTTP 408 Timeout
                     true      // 재시도 가능
                 );
@@ -522,7 +549,16 @@ export class ApiClient {
         }
 
         const result = await response.json();
-        return JSON.parse(result.choices[0].message.content);
+        const aiResponse = JSON.parse(result.choices[0].message.content);
+
+        // AI 응답 검증 및 정규화
+        const validation = validateAndNormalizeAIResponse(aiResponse);
+
+        if (validation.normalized) {
+            console.warn('[ApiClient] GPT-4o-mini 응답 정규화됨:', validation.errors);
+        }
+
+        return validation.data;
     }
 
     /**
@@ -588,7 +624,16 @@ export class ApiClient {
         }
 
         const result = await response.json();
-        return JSON.parse(result.content[0].text);
+        const aiResponse = JSON.parse(result.content[0].text);
+
+        // AI 응답 검증 및 정규화
+        const validation = validateAndNormalizeAIResponse(aiResponse);
+
+        if (validation.normalized) {
+            console.warn('[ApiClient] Claude Haiku 응답 정규화됨:', validation.errors);
+        }
+
+        return validation.data;
     }
 
     /**
@@ -652,6 +697,15 @@ export class ApiClient {
         }
 
         const result = await response.json();
-        return JSON.parse(result.candidates[0].content.parts[0].text);
+        const aiResponse = JSON.parse(result.candidates[0].content.parts[0].text);
+
+        // AI 응답 검증 및 정규화
+        const validation = validateAndNormalizeAIResponse(aiResponse);
+
+        if (validation.normalized) {
+            console.warn('[ApiClient] Gemini Flash 응답 정규화됨:', validation.errors);
+        }
+
+        return validation.data;
     }
 }

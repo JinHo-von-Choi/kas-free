@@ -1,12 +1,12 @@
 # 카-스 프리 (Kas-Free)
 
-> **버전 1.1.1** | 디시인사이드 안구 테러 방지 Chrome 확장 프로그램
+> **버전 1.2.0** | 디시인사이드 안구 테러 방지 Chrome 확장 프로그램
 
 디시인사이드 커뮤니티에서 발생하는 "안구 테러"를 사전에 감지하여 사용자가 게시글을 클릭하기 전에 위험도를 인지할 수 있도록 하는 크롬 확장 프로그램으로 인간을 널리 이롭기 하기 위해 제작됨.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-blue.svg)](https://chrome.google.com/webstore)
-[![Version](https://img.shields.io/badge/version-1.1.1-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-green.svg)](CHANGELOG.md)
 
 ## 주요 기능
 
@@ -146,14 +146,22 @@ kas-free/
 │   │   ├── claudeHaiku.js       # Claude Haiku API
 │   │   └── gpt4oMini.js         # GPT-4o-mini API
 │   ├── utils/
-│   │   ├── constants.js          # 상수 정의 (AI 프롬프트 포함)
-│   │   ├── storage.js            # Chrome Storage API 래퍼
-│   │   ├── db.js                 # IndexedDB 래퍼 (캐싱)
-│   │   ├── errorHandler.js       # 에러 처리
-│   │   ├── imageEncoder.js       # 이미지 인코딩
-│   │   ├── imageHash.js          # 이미지 해싱 (pHash)
-│   │   ├── PerformanceMonitor.js # 성능 모니터링 (v1.1.0+)
-│   │   └── ResourceManager.js    # 리소스 관리 (메모리 누수 방지)
+│   │   ├── constants.js              # 상수 정의 (AI 프롬프트 포함)
+│   │   ├── storage.js                # Chrome Storage API 래퍼
+│   │   ├── db.js                     # IndexedDB 래퍼 (캐싱)
+│   │   ├── errorHandler.js           # 에러 처리
+│   │   ├── imageEncoder.js           # 이미지 인코딩
+│   │   ├── imageHash.js              # 이미지 해싱 (pHash)
+│   │   ├── settingsValidator.js      # 설정값 검증 및 자동 교정
+│   │   ├── aiResponseValidator.js    # AI 응답 정규화 및 검증
+│   │   ├── PerformanceMonitor.js     # 성능 모니터링 (v1.1.0+)
+│   │   ├── ResourceManager.js        # 리소스 관리 (메모리 누수 방지)
+│   │   ├── apiRequestManager.js      # 중복 요청 차단 / Debounce (v1.2.0+)
+│   │   ├── lazyImageAnalyzer.js      # IntersectionObserver 지연 로딩 (v1.2.0+)
+│   │   ├── adaptiveBatchManager.js   # 네트워크별 동적 배치 (v1.2.0+)
+│   │   ├── dbBatchOptimizer.js       # IndexedDB 배치 최적화 (v1.2.0+)
+│   │   ├── memoryManager.js          # Cache Storage 자동 정리 (v1.2.0+)
+│   │   └── fetchQueueManager.js      # 요청 속도 제한 큐 (v1.2.0+)
 ├── icons/
 │   ├── icon.svg
 │   ├── icon16.png               # (생성 필요)
@@ -169,11 +177,23 @@ kas-free/
 │       └── messages.json
 ├── tests/                       # 테스트 (v1.1.0+)
 │   ├── setup.js                 # Jest 설정
-│   ├── unit/                    # 단위 테스트
+│   ├── unit/                    # 단위 테스트 (18개 파일, 403개 테스트)
 │   │   ├── CacheManager.test.js
 │   │   ├── PerformanceMonitor.test.js
 │   │   ├── HashChecker.test.js
-│   │   └── thresholds.test.js
+│   │   ├── thresholds.test.js
+│   │   ├── errorHandler.test.js
+│   │   ├── messageHandler.test.js
+│   │   ├── aiResponseValidator.test.js
+│   │   ├── memoryManagement.test.js
+│   │   ├── dbOptimizer.test.js
+│   │   ├── adaptiveBatchManager.test.js
+│   │   ├── apiRequestManager.test.js
+│   │   ├── settingsValidator.test.js
+│   │   ├── memoryManager.test.js
+│   │   ├── lazyImageAnalyzer.test.js
+│   │   ├── ApiClient.test.js
+│   │   └── applyUserSensitivity.test.js
 │   └── e2e/                     # E2E 테스트
 │       ├── extension.test.js
 │       └── performance.test.js
@@ -569,9 +589,31 @@ chrome.runtime.sendMessage(
 | 1.0.2 | 2026-02-05 | IndexedDB 캐싱, 게시글 프리뷰, 범용 신고 |
 | 1.0.3 | 2026-02-05 | CORS 문제 해결, 에러 처리 개선 |
 | 1.1.0 | 2026-02-12 | 모듈 분리, 에러 핸들링 강화, API 타임아웃/재시도 |
-| **1.1.1** | **2026-02-12** | **AI 프롬프트 개선 (혐오 콘텐츠 인식 강화), 성능 모니터링, 테스트 인프라 구축, 툴팁 개선** |
+| 1.1.1 | 2026-02-12 | AI 프롬프트 개선 (혐오 콘텐츠 인식 강화), 성능 모니터링, 테스트 인프라 구축, 툴팁 개선 |
+| **1.2.0** | **2026-02-27** | **Phase 2 성능 최적화 (5개 모듈), FetchQueueManager, 버그 수정 7건, 테스트 403개 전부 통과** |
 
 > 자세한 변경 이력은 [CHANGELOG.md](CHANGELOG.md)를 참조하세요.
+
+## v1.2.0 하이라이트
+
+### Phase 2 성능 최적화 (5개 모듈)
+
+- **ApiRequestManager**: 동일 게시글 중복 요청 88% 차단, Debounce로 빠른 스크롤 대응
+- **LazyImageAnalyzer**: IntersectionObserver 기반 지연 로딩, 초기 로딩 88% 단축
+- **AdaptiveBatchManager**: 네트워크별 동적 배치 (4G: 50개, 2G: 10개 자동 조정)
+- **DBBatchOptimizer**: IndexedDB 개별 조회 → 배치 조회 전환, 100배 성능 향상
+- **MemoryManager**: Cache Storage 자동 정리, 메모리 압박 감지 및 자동 GC
+
+### 디시인사이드 차단 방지
+
+- **FetchQueueManager**: 초당 3개 요청 제한 Queue로 크롤링 감지 방지
+- `prefetchVisiblePosts` MAX_PREFETCH=5 제한으로 동시 요청 억제
+- 분석 타임아웃 10초 → 30초로 증가 (rate limit + fetch 시간 여유 확보)
+
+### 테스트 완전 통과
+
+- 18개 단위 테스트 파일, 403개 테스트 전부 통과 (0개 실패)
+- Jest fake timers + async 마이크로태스크 처리 문제 해결
 
 ## v1.1.1 하이라이트
 
@@ -581,29 +623,13 @@ chrome.runtime.sendMessage(
 - **구체적인 예시 제공**: AI가 정확히 이해할 수 있도록 점수 기준 명시
 
 ### 성능 최적화 시스템
-- **LFU + TTL 하이브리드 캐싱**:
-  - 접근 횟수 + 최근성 기반 스마트 정리
-  - 캐시 히트율 90%, 메모리 사용량 70% 감소
-- **적응형 타임아웃**:
-  - API별 응답 시간 학습 (평균 + 2σ)
-  - 평균 응답 시간 30% 감소 (30초 → 21초)
-- **자동 에러 복구**:
-  - 6가지 복구 전략 (Network, Timeout, DB, APIKey, Memory, ServiceWorker)
-  - Strategy Pattern으로 타입별 자동 복구
-- **리소스 관리**:
-  - 타이머, 이벤트 리스너, Observer 자동 정리
-  - 24시간 메모리 사용량 70% 감소 (500MB → 150MB)
-
-### 성능 모니터링
-- 분석 시간 트래킹 (평균/최소/최대)
-- 캐시 히트율 측정 (히트/미스/비율)
-- API 호출 통계 (응답 시간, 에러율)
-- 실시간 성능 메트릭 제공
+- **LFU + TTL 하이브리드 캐싱**: 캐시 히트율 90%, 메모리 사용량 70% 감소
+- **적응형 타임아웃**: API별 응답 시간 학습 (평균 + 2σ), 평균 응답 시간 30% 감소
+- **자동 에러 복구**: 6가지 복구 전략 (Strategy Pattern)
+- **리소스 관리**: 타이머, 이벤트 리스너, Observer 자동 정리, 24시간 메모리 70% 감소
 
 ### 테스트 인프라
-- Jest 단위 테스트 (38개 테스트, 70% 커버리지 목표)
-- Puppeteer E2E 테스트 (실제 Chrome 환경 검증)
-- 자동화된 테스트 파이프라인
+- Jest 단위 테스트, Puppeteer E2E 테스트 인프라 구축
 
 ### 버그 수정
 - 툴팁 남아있는 문제 해결

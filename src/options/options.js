@@ -66,6 +66,7 @@
         cacheDuration:     24 * 60 * 60 * 1000,  // 24시간
         debugMode:         false,  // 디버그 모드
         replaceAllImages:  false,  // 모든 이미지 대체 (디버그용)
+        nsfwApiKey:        '',     // NSFW 서버 API 키 (X-API-Key 헤더)
 
         // ========================================
         // 민감도 설정 (10개 카테고리)
@@ -147,6 +148,11 @@
      * → name = 'gore'일 때 elements.goreSensitivity
      */
     const elements = {
+        // ========================================
+        // NSFW 서버 API 키 (1개)
+        // ========================================
+        nsfwApiKey:            document.getElementById('nsfwApiKey'),            // NSFW 서버 API 키
+
         // ========================================
         // API 설정 (3개 모델 × 3개 필드 = 9개)
         // ========================================
@@ -275,12 +281,12 @@
         elements.geminiFlashEnabled.checked  = settings.apis.geminiFlash?.enabled || false;
         elements.geminiFlashApiKey.value     = settings.apis.geminiFlash?.apiKey || '';
         elements.geminiFlashPriority.value   = settings.apis.geminiFlash?.priority || 1;
-        elements.claudeHaikuEnabled.checked  = settings.apis.claudeHaiku.enabled;
-        elements.claudeHaikuApiKey.value     = settings.apis.claudeHaiku.apiKey;
-        elements.claudeHaikuPriority.value   = settings.apis.claudeHaiku.priority;
-        elements.gpt4oMiniEnabled.checked    = settings.apis.gpt4oMini.enabled;
-        elements.gpt4oMiniApiKey.value       = settings.apis.gpt4oMini.apiKey;
-        elements.gpt4oMiniPriority.value     = settings.apis.gpt4oMini.priority;
+        elements.claudeHaikuEnabled.checked  = settings.apis.claudeHaiku?.enabled || false;
+        elements.claudeHaikuApiKey.value     = settings.apis.claudeHaiku?.apiKey || '';
+        elements.claudeHaikuPriority.value   = settings.apis.claudeHaiku?.priority || 2;
+        elements.gpt4oMiniEnabled.checked    = settings.apis.gpt4oMini?.enabled || false;
+        elements.gpt4oMiniApiKey.value       = settings.apis.gpt4oMini?.apiKey || '';
+        elements.gpt4oMiniPriority.value     = settings.apis.gpt4oMini?.priority || 3;
 
         /** 민감도 설정 */
         const sensitivity = settings.sensitivity;
@@ -306,6 +312,9 @@
         elements.cacheEnabled.checked      = settings.cacheEnabled;
         elements.debugMode.checked         = settings.debugMode;
         elements.replaceAllImages.checked  = settings.replaceAllImages;
+        if (elements.nsfwApiKey) {
+            elements.nsfwApiKey.value = settings.nsfwApiKey || '';
+        }
     }
 
     /**
@@ -394,6 +403,7 @@
             cacheDuration:     24 * 60 * 60 * 1000,                 // 24시간 (밀리초)
             debugMode:         elements.debugMode.checked,          // true/false
             replaceAllImages:  elements.replaceAllImages.checked,   // true/false
+            nsfwApiKey:        elements.nsfwApiKey?.value.trim() || '',  // NSFW 서버 API 키
 
             // ========================================
             // 민감도 설정 (슬라이더 0-100 → 0.0-1.0)

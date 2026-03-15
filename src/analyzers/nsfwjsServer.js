@@ -6,9 +6,22 @@
  */
 
 export class NsfwjsServerAnalyzer {
-    constructor(serverUrl = 'https://nsfw.nerdvana.kr') {
-        this.name = 'NSFW.js Server';
+    constructor(serverUrl = 'https://nsfw.nerdvana.kr', apiKey = '') {
+        this.name      = 'NSFW.js Server';
         this.serverUrl = serverUrl;
+        this.apiKey    = apiKey;
+    }
+
+    /**
+     * API 키가 포함된 공통 헤더를 반환한다
+     * @returns {object}
+     */
+    _buildHeaders() {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.apiKey) {
+            headers['X-API-Key'] = this.apiKey;
+        }
+        return headers;
     }
 
     /**
@@ -34,11 +47,9 @@ export class NsfwjsServerAnalyzer {
             };
 
             const response = await fetch(`${this.serverUrl}/api/analyze`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody)
+                method:  'POST',
+                headers: this._buildHeaders(),
+                body:    JSON.stringify(requestBody)
             });
 
             if (!response.ok) {
@@ -82,11 +93,9 @@ export class NsfwjsServerAnalyzer {
             };
 
             const response = await fetch(`${this.serverUrl}/api/check`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody)
+                method:  'POST',
+                headers: this._buildHeaders(),
+                body:    JSON.stringify(requestBody)
             });
 
             if (!response.ok) {
@@ -302,11 +311,9 @@ export class NsfwjsServerAnalyzer {
             });
 
             const response = await fetch(`${this.serverUrl}/api/report/v2`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody)
+                method:  'POST',
+                headers: this._buildHeaders(),
+                body:    JSON.stringify(requestBody)
             });
 
             if (!response.ok) {
