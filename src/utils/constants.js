@@ -229,6 +229,10 @@ export const RISK_CATEGORIES = {
  * - 안전한 기본값 제공
  */
 export const DEFAULT_SETTINGS = {
+    prefetchEnabled: false,
+    protectPending: true,
+    allowServerAnalysis: false,
+    profile: { version: 1, categories: {}, domainExceptions: [] },
     // ========================================
     // 기본 기능 설정
     // ========================================

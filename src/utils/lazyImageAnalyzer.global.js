@@ -18,13 +18,13 @@
         constructor(options = {}) {
             this.onVisible = options.onVisible || (() => {});
             this.onHidden = options.onHidden || (() => {});
-            this.rootMargin = options.rootMargin || 200;
+            this.rootMargin = options.rootMargin ?? 0;
             this.threshold = options.threshold || 0.1;
 
             this.observedElements = new Map();
             this.analysisQueue = [];
             this.activeAnalysis = 0;
-            this.maxConcurrent = 5;
+            this.maxConcurrent = 1;
             this.observer = null;
 
             this.init();

@@ -254,6 +254,21 @@
     filter: none;
 }
 
+html.kas-protect-pending .writing_view_box img:not(.written_dccon):not([data-kas-revealed="true"]):not([data-kas-checked="true"]) {
+    visibility: hidden !important;
+}
+html.kas-extension-enabled .writing_view_box img.kas-blocked-image:not([data-kas-revealed="true"]) {
+    visibility: hidden !important;
+}
+.kas-protection-notice {
+    padding: 10px 14px;
+    margin: 12px 0;
+    background: #20242b;
+    color: #fff;
+    font: 14px/1.6 sans-serif;
+}
+.kas-protection-notice button { margin-left: 12px; cursor: pointer; }
+
 /** 제목 셀 내 정렬 보정 */
 td.gall_tit a {
     display: inline-flex;

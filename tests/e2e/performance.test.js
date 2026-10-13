@@ -1,350 +1,44 @@
-/**
- * 성능 측정 E2E 테스트
- * @author 최진호
- * @date 2026-02-12
- * @modified 2026-03-15
- */
-
-const puppeteer = require('puppeteer');
-const path      = require('path');
-
-describe('Performance Monitoring E2E', () => {
-    let browser;
-    let extensionWorker;
-    let extensionId;
-
-    const EXTENSION_PATH = path.resolve(__dirname, '../../');
-    const TEST_TIMEOUT   = 30000;
-
-    beforeAll(async () => {
-        browser = await puppeteer.launch({
-            headless: false,
-            args: [
-                `--disable-extensions-except=${EXTENSION_PATH}`,
-                `--load-extension=${EXTENSION_PATH}`,
-                '--no-sandbox',
-                '--disable-setuid-sandbox'
-            ]
-        });
-
-        /** 확장 로드 완료 대기 */
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        /**
-         * service_worker target을 우선 탐색하고,
-         * 없으면 background_page로 fallback.
-         * service_worker target은 .page()가 null을 반환하므로
-         * extensionId 추출에만 사용하고 worker()로 평가 컨텍스트 확보.
-         */
-        const targets         = await browser.targets();
-        const extensionTarget = targets.find(t => t.type() === 'service_worker') ||
-                                targets.find(t => t.type() === 'background_page');
-
-        if (extensionTarget) {
-            extensionId     = extensionTarget.url().split('/')[2];
-            extensionWorker = await extensionTarget.worker();
-        }
-    }, TEST_TIMEOUT);
-
-    afterAll(async () => {
-        if (browser) {
-            await browser.close();
-        }
-    });
-
-    /**
-     * chrome.runtime.sendMessage를 실행할 extension 컨텍스트 페이지를 생성한다.
-     * 일반 newPage()로 생성한 페이지에는 chrome.runtime이 없으므로
-     * chrome-extension:// URL을 직접 열어 해당 컨텍스트에서 실행해야 한다.
-     */
-    const createExtPage = async () => {
-        if (!extensionId) return null;
-        const page = await browser.newPage();
-        await page.goto(
-            `chrome-extension://${extensionId}/src/options/options.html`,
-            { waitUntil: 'networkidle0' }
-        );
-        return page;
-    };
-
-    describe('분석 시간 트래킹', () => {
-        let extPage;
-
-        beforeEach(async () => {
-            extPage = await createExtPage();
-        });
-
-        afterEach(async () => {
-            if (extPage) {
-                await extPage.close();
-            }
-        });
-
-        test('이미지 분석 시간이 기록되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            /** 초기 메트릭 조회 */
-            const beforeMetrics = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        resolve
-                    );
-                });
-            });
-
-            const beforeTotal = beforeMetrics.analysis.total;
-
-            /** 이미지 분석 수행 (Mock) */
-            await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        {
-                            type:    'ANALYZE_IMAGE',
-                            postNo:  '12345',
-                            postUrl: 'https://gall.dcinside.com/test/12345'
-                        },
-                        resolve
-                    );
-                });
-            });
-
-            /** 메트릭 재조회 */
-            const afterMetrics = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        resolve
-                    );
-                });
-            });
-
-            /** 분석 횟수가 증가했는지 확인 */
-            expect(afterMetrics.analysis.total).toBeGreaterThanOrEqual(beforeTotal);
-
-            /** avgTime이 기록되었는지 확인 */
-            if (afterMetrics.analysis.total > 0) {
-                expect(afterMetrics.analysis.avgTime).toBeGreaterThan(0);
-            }
-        }, TEST_TIMEOUT);
-    });
-
-    describe('캐시 히트율 측정', () => {
-        let extPage;
-
-        beforeEach(async () => {
-            extPage = await createExtPage();
-        });
-
-        afterEach(async () => {
-            if (extPage) {
-                await extPage.close();
-            }
-        });
-
-        test('캐시 히트율이 계산되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            const metrics = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        resolve
-                    );
-                });
-            });
-
-            expect(metrics.cache).toBeDefined();
-            expect(metrics.cache.hits).toBeDefined();
-            expect(metrics.cache.misses).toBeDefined();
-            expect(metrics.cache.hitRate).toBeDefined();
-            expect(metrics.cache.hitRate).toMatch(/%$/);
-        });
-
-        test('캐시 히트율이 0-100% 범위 내에 있어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            const metrics = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        resolve
-                    );
-                });
-            });
-
-            const hitRateNum = parseFloat(metrics.cache.hitRate);
-            expect(hitRateNum).toBeGreaterThanOrEqual(0);
-            expect(hitRateNum).toBeLessThanOrEqual(100);
-        });
-    });
-
-    describe('API 호출 시간', () => {
-        let extPage;
-
-        beforeEach(async () => {
-            extPage = await createExtPage();
-        });
-
-        afterEach(async () => {
-            if (extPage) {
-                await extPage.close();
-            }
-        });
-
-        test('API 호출 통계가 기록되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            const metrics = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        resolve
-                    );
-                });
-            });
-
-            expect(metrics.api).toBeDefined();
-            expect(metrics.api.total).toBeDefined();
-            expect(metrics.api.avgTime).toBeDefined();
-            expect(metrics.api.errors).toBeDefined();
-            expect(metrics.api.errorRate).toBeDefined();
-            expect(metrics.api.errorRate).toMatch(/%$/);
-        });
-    });
-
-    describe('해시 생성 시간', () => {
-        let extPage;
-
-        beforeEach(async () => {
-            extPage = await createExtPage();
-        });
-
-        afterEach(async () => {
-            if (extPage) {
-                await extPage.close();
-            }
-        });
-
-        test('해시 생성 통계가 기록되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            const metrics = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        resolve
-                    );
-                });
-            });
-
-            expect(metrics.hash).toBeDefined();
-            expect(metrics.hash.total).toBeDefined();
-            expect(metrics.hash.avgTime).toBeDefined();
-        });
-    });
-
-    describe('세션 정보', () => {
-        let extPage;
-
-        beforeEach(async () => {
-            extPage = await createExtPage();
-        });
-
-        afterEach(async () => {
-            if (extPage) {
-                await extPage.close();
-            }
-        });
-
-        test('세션 정보가 기록되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            const metrics = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        resolve
-                    );
-                });
-            });
-
-            expect(metrics.session).toBeDefined();
-            expect(metrics.session.durationHours).toBeDefined();
-            expect(metrics.session.startTime).toBeDefined();
-            expect(metrics.session.lastReset).toBeDefined();
-
-            /** ISO 날짜 형식 검증 */
-            expect(metrics.session.startTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-            expect(metrics.session.lastReset).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-        });
-    });
-
-    describe('메트릭 저장 및 복원', () => {
-        let extPage;
-
-        beforeEach(async () => {
-            extPage = await createExtPage();
-        });
-
-        afterEach(async () => {
-            if (extPage) {
-                await extPage.close();
-            }
-        });
-
-        test('메트릭이 스토리지에 저장되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - 테스트 건너뜀');
-                return;
-            }
-
-            /** 메트릭 조회 트리거 */
-            await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        resolve
-                    );
-                });
-            });
-
-            /**
-             * 스토리지 확인은 Service Worker 컨텍스트에서 수행.
-             * extensionWorker가 없는 경우 extPage 컨텍스트에서 대체 조회한다.
-             */
-            let stored;
-            if (extensionWorker) {
-                stored = await extensionWorker.evaluate(() => {
-                    return chrome.storage.local.get('performance_metrics');
-                });
-            } else {
-                stored = await extPage.evaluate(() => {
-                    return new Promise((resolve) => {
-                        chrome.storage.local.get('performance_metrics', resolve);
-                    });
-                });
-            }
-
-            expect(stored.performance_metrics).toBeDefined();
-        });
-    });
+const {test,before,after}=require('node:test');
+const assert=require('node:assert/strict');
+const {launchFixtureBrowser}=require('./browserHarness');
+let h;
+before(async()=>{h=await launchFixtureBrowser();},{timeout:30000});
+after(async()=>{if(h)await h.browser.close();});
+const postUrl='https://gall.dcinside.com/board/view/?id=tests&no=1';
+test('동시 다운로드의 전체 간격·재조회 공유·실제 분석 계측',async()=>{
+ const results=await Promise.all([1,2,3].map(i=>h.send('ANALYZE_IMAGE',{postUrl,imageUrl:`https://dcimg${i}.dcinside.com/viewimage.php?id=${i}`})));
+ assert.ok(results.every(result=>result.status==='unchecked'));
+ const downloads=h.requests.filter(row=>row.pathname==='/viewimage.php');assert.equal(downloads.length,3);
+ for(let i=1;i<downloads.length;i++)assert.ok(downloads[i].time-downloads[i-1].time>=1450);
+ await h.send('ANALYZE_IMAGE',{postUrl,imageUrl:'https://dcimg1.dcinside.com/viewimage.php?id=1'});
+ assert.equal(h.requests.filter(row=>row.pathname==='/viewimage.php').length,3);
+ const metrics=await h.send('GET_PERFORMANCE_METRICS');
+ assert.equal(metrics.analysis.total,4);assert.equal(metrics.hash.total,4);assert.equal(metrics.api.total,4);
+ assert.ok(metrics.hash.avgTime>0);assert.ok(metrics.api.avgTime>0);
+});
+test('429 뒤 다른 URL·수동 요청도 전송 중단',async()=>{
+ h.state.dcStatus=429;
+ assert.equal((await h.send('ANALYZE_IMAGE',{postUrl,imageUrl:'https://dcimg7.dcinside.com/viewimage.php?id=7'})).status,'deferred');
+ const count=h.requests.filter(row=>row.pathname==='/viewimage.php').length;
+ assert.equal((await h.send('ANALYZE_IMAGE',{postUrl,imageUrl:'https://dcimg8.dcinside.com/viewimage.php?id=8',userInitiated:true})).status,'deferred');
+ assert.equal(h.requests.filter(row=>row.pathname==='/viewimage.php').length,count);
+ assert.equal((await h.send('RESUME_DC_REQUESTS')).status,'deferred');
+});
+test('예산과 cooldown 영속 상태 확인',async()=>{
+ const persisted=await h.options.evaluate(()=>chrome.storage.local.get('dcRequestBudgetV1'));
+ assert.equal(persisted.dcRequestBudgetV1.history.length,4);
+ assert.ok(persisted.dcRequestBudgetV1.pauseUntil>Date.now());assert.deepEqual(h.errors,[]);
+});
+test('기존 성능·캐시·API·해시·세션 지표 계약과 저장 유지',async()=>{
+ const metrics=await h.send('GET_PERFORMANCE_METRICS');
+ assert.ok(metrics.analysis.total>0);assert.ok(metrics.analysis.avgTime>0);
+ for(const field of ['hits','misses','hitRate'])assert.ok(Object.hasOwn(metrics.cache,field));
+ assert.match(metrics.cache.hitRate,/%$/);assert.ok(parseFloat(metrics.cache.hitRate)>=0 && parseFloat(metrics.cache.hitRate)<=100);
+ for(const field of ['total','avgTime','errors','errorRate'])assert.ok(Object.hasOwn(metrics.api,field));
+ assert.match(metrics.api.errorRate,/%$/);
+ assert.ok(Object.hasOwn(metrics.hash,'total'));assert.ok(Object.hasOwn(metrics.hash,'avgTime'));
+ assert.ok(Object.hasOwn(metrics.session,'durationHours'));
+ assert.match(metrics.session.startTime,/^\d{4}-\d{2}-\d{2}T/);assert.match(metrics.session.lastReset,/^\d{4}-\d{2}-\d{2}T/);
+ const stored=await h.options.evaluate(()=>chrome.storage.local.get('performance_metrics'));
+ assert.ok(stored.performance_metrics);
 });

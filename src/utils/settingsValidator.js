@@ -1,3 +1,4 @@
+import { validateProfile } from './personalProfile.js';
 /**
  * ========================================
  * 설정값 범위 검증 모듈
@@ -50,6 +51,13 @@ export function validateSettings(settings) {
     validated.autoHideDanger      = validateBoolean(settings.autoHideDanger, false);
     validated.cacheEnabled        = validateBoolean(settings.cacheEnabled, true);
     validated.debugMode           = validateBoolean(settings.debugMode, false);
+
+    validated.replaceAllImages = validateBoolean(settings.replaceAllImages, false);
+    validated.prefetchEnabled = validateBoolean(settings.prefetchEnabled, false);
+    validated.protectPending = validateBoolean(settings.protectPending, true);
+    validated.allowServerAnalysis = validateBoolean(settings.allowServerAnalysis, false);
+    validated.nsfwApiKey = typeof settings.nsfwApiKey === 'string' ? settings.nsfwApiKey.trim() : '';
+    validated.profile = validateProfile(settings.profile);
 
     // 2. 숫자 값 검증
     validated.cacheDuration       = validatePositiveNumber(settings.cacheDuration, 24 * 60 * 60 * 1000);

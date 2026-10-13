@@ -1,3 +1,4 @@
+import { getDcRequestBroker, validateDcUrl } from './DcRequestBroker.js';
 /**
  * 이미지 신고 핸들러
  * @author 최진호
@@ -32,7 +33,6 @@ export class ImageReportHandler {
      */
     async handleReport(imageUrl, pageUrl, category, tab, getOrCreateReporterId) {
         try {
-            console.log('[ImageReport] 이미지 신고 시작:', { imageUrl, pageUrl, category });
 
             // 이미지 URL 유효성 검증
             if (!imageUrl || !imageUrl.startsWith('http')) {
@@ -42,11 +42,8 @@ export class ImageReportHandler {
             }
 
             // 디시인사이드 이미지 여부 확인
-            const isDcImage = imageUrl && (
-                imageUrl.includes('dcimg') ||
-                imageUrl.includes('dcinside.com') ||
-                imageUrl.includes('dcinside.co.kr')
-            );
+            const imageHost = new URL(imageUrl).hostname;
+            const isDcImage = /^(?:[a-z0-9-]+\.)*dcinside\.(com|co\.kr)$/.test(imageHost);
 
             console.log('[ImageReport] 이미지 출처:', isDcImage ? 'DCInside' : 'External');
 
@@ -75,7 +72,6 @@ export class ImageReportHandler {
                 await getOrCreateReporterId()
             );
 
-            console.log('[ImageReport] 신고 페이로드:', this.sanitizePayload(requestBody));
 
             // 서버 전송
             const result = await this.sendToServer(requestBody);
@@ -146,6 +142,7 @@ export class ImageReportHandler {
      * @returns {Promise<object>}
      */
     async processImage(imageUrl, isDcImage, tabId) {
+        if (isDcImage) return analyzeAndEncodeImage(imageUrl, { tabId, priority: 1 });
         let imageData;
 
         // 1차 시도: Content Script (Canvas 추출)
@@ -200,6 +197,7 @@ export class ImageReportHandler {
                     errorMessage: fetchError.message
                 });
 
+                if (fetchError.name === 'DcRequestError') throw fetchError;
                 // 최후의 수단: URL만 전송
                 imageData = {
                     type: 'url',
@@ -360,9 +358,10 @@ export class ImageReportHandler {
      */
     async fetchAndConvertExternalImage(imageUrl) {
         try {
-            console.log('[ImageReport] 외부 이미지 다운로드 시작:', imageUrl);
 
-            const response = await fetch(imageUrl, DC_IMAGE_FETCH_OPTIONS);
+            const parsed = new URL(imageUrl);
+            if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('허용되지 않은 이미지 주소입니다.');
+            const response = await fetch(imageUrl, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(15000) });
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);

@@ -38,7 +38,8 @@ describe('HashChecker', () => {
             const result = await hashChecker.check(mockHashes, 10, mockReporterId);
 
             expect(result.matched).toBe(false);
-            expect(result.riskScore).toBe(0);
+            expect(result.riskScore).toBeNull();
+            expect(result.status).toBe('unchecked');
             expect(result.source).toBe('hash-db');
             expect(fetch).toHaveBeenCalledWith(
                 `${mockServerUrl}/api/check/hash`,
@@ -113,7 +114,8 @@ describe('HashChecker', () => {
 
             const result = hashChecker.transformResult(data);
 
-            expect(result.riskScore).toBe(0);
+            expect(result.riskScore).toBeNull();
+            expect(result.status).toBe('unchecked');
             expect(result.matched).toBe(false);
             expect(result.source).toBe('hash-db');
             expect(result.categories.gore).toBe(0);

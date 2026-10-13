@@ -14,6 +14,21 @@
             <h1 class="options__title">카-스 프리 설정</h1>
         </header>
 
+        <section class="options__section">
+            <h2>보호·수집 설정</h2>
+            <label><input id="protectPending" type="checkbox"> 검사 중·미확인 이미지를 가리기</label><br>
+            <label><input id="prefetchEnabled" type="checkbox"> 화면 밖 게시글 선행 조회 허용</label><br>
+            <label><input id="allowServerAnalysis" type="checkbox"> 해시 미일치 이미지의 서버 정밀 검사 허용</label>
+            <p>정밀 검사는 이미지 내용을 NSFW 서버에 전송합니다. 해제하면 해시 미일치를 미확인으로 표시합니다. 모든 디시 조회는 탭 합산·분/시간 예산을 적용합니다.</p>
+            <fieldset><legend>필터에 포함할 범주</legend><div id="profileCategories"></div></fieldset>
+            <label for="domainExceptions">사이트 예외 (한 줄에 도메인 하나)</label><br>
+            <textarea id="domainExceptions" rows="3" placeholder="gall.dcinside.com"></textarea><br>
+            <label for="bypassMinutes">개인 필터 일시 해제</label>
+            <select id="bypassMinutes"><option value="keep">현재 설정 유지</option><option value="0">해제 종료</option><option value="15">15분</option><option value="60">1시간</option></select>
+            <p id="dcRequestStatus" role="status">수집 상태 확인 중</p>
+            <button id="resumeDcRequests" type="button">접근 제한 확인 후 수집 재개</button>
+            <p>재개해도 요청 예산과 서버가 지정한 대기 시간은 초기화하지 않습니다.</p>
+        </section>
         <!-- NSFW 서버 API 키 섹션 -->
         <section class="options__section">
             <h2 class="options__section-title">NSFW 서버 설정</h2>

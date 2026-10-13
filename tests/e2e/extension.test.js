@@ -1,330 +1,120 @@
-/**
- * Chrome 확장 프로그램 E2E 테스트
- * @author 최진호
- * @date 2026-02-12
- * @modified 2026-03-15
- */
-
-const puppeteer = require('puppeteer');
-const path      = require('path');
-
-describe('Kas-Free Chrome Extension E2E', () => {
-    let browser;
-    let extensionWorker;
-    let extensionId;
-
-    const EXTENSION_PATH = path.resolve(__dirname, '../../');
-    const TEST_TIMEOUT   = 30000;
-
-    beforeAll(async () => {
-        browser = await puppeteer.launch({
-            headless: false,
-            args: [
-                `--disable-extensions-except=${EXTENSION_PATH}`,
-                `--load-extension=${EXTENSION_PATH}`,
-                '--no-sandbox',
-                '--disable-setuid-sandbox'
-            ]
-        });
-
-        /** 확장 로드 완료 대기 */
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        /**
-         * service_worker target을 우선 탐색하고,
-         * 없으면 background_page로 fallback.
-         * service_worker target은 .page()가 null을 반환하므로
-         * extensionId 추출에만 사용한다.
-         */
-        const targets         = await browser.targets();
-        const extensionTarget = targets.find(t => t.type() === 'service_worker') ||
-                                targets.find(t => t.type() === 'background_page');
-
-        if (extensionTarget) {
-            extensionId     = extensionTarget.url().split('/')[2];
-            extensionWorker = await extensionTarget.worker();
-            console.log('확장 프로그램 ID:', extensionId);
-        }
-    }, TEST_TIMEOUT);
-
-    afterAll(async () => {
-        if (browser) {
-            await browser.close();
-        }
-    });
-
-    describe('확장 프로그램 로드', () => {
-        test('확장 프로그램이 정상적으로 로드되어야 함', async () => {
-            expect(extensionId).toBeDefined();
-            expect(extensionId).toMatch(/^[a-z]{32}$/);
-        });
-
-        test('Service Worker가 실행되어야 함', async () => {
-            expect(extensionWorker).toBeDefined();
-        });
-    });
-
-    describe('팝업 페이지', () => {
-        let popupPage;
-
-        beforeEach(async () => {
-            if (!extensionId) {
-                console.warn('extensionId 확보 실패 - 팝업 페이지 테스트 건너뜀');
-                return;
-            }
-            const popupUrl = `chrome-extension://${extensionId}/src/popup/popup.html`;
-            popupPage      = await browser.newPage();
-            await popupPage.goto(popupUrl, { waitUntil: 'networkidle0' });
-        });
-
-        afterEach(async () => {
-            if (popupPage) {
-                await popupPage.close();
-            }
-        });
-
-        test('팝업 페이지가 로드되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - 테스트 건너뜀');
-                return;
-            }
-            const title = await popupPage.title();
-            expect(title).toBeTruthy();
-        });
-
-        test('통계 정보가 표시되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - 테스트 건너뜀');
-                return;
-            }
-            const statsElement = await popupPage.$('.stats');
-            expect(statsElement).toBeTruthy();
-        });
-    });
-
-    describe('옵션 페이지', () => {
-        let optionsPage;
-
-        beforeEach(async () => {
-            if (!extensionId) {
-                console.warn('extensionId 확보 실패 - 옵션 페이지 테스트 건너뜀');
-                return;
-            }
-            const optionsUrl = `chrome-extension://${extensionId}/src/options/options.html`;
-            optionsPage      = await browser.newPage();
-            await optionsPage.goto(optionsUrl, { waitUntil: 'networkidle0' });
-        });
-
-        afterEach(async () => {
-            if (optionsPage) {
-                await optionsPage.close();
-            }
-        });
-
-        test('옵션 페이지가 로드되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - 테스트 건너뜀');
-                return;
-            }
-            const title = await optionsPage.title();
-            expect(title).toBeTruthy();
-        });
-
-        test('설정 항목들이 표시되어야 함', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - 테스트 건너뜀');
-                return;
-            }
-            const settingsForm = await optionsPage.$('form');
-            expect(settingsForm).toBeTruthy();
-        });
-    });
-
-    describe('메시지 통신', () => {
-        /**
-         * chrome.runtime.sendMessage는 chrome-extension:// 컨텍스트에서만 동작한다.
-         * 일반 newPage()로 생성한 페이지에는 chrome.runtime이 없으므로
-         * options 페이지를 직접 열어 해당 컨텍스트에서 실행한다.
-         */
-        let extPage;
-
-        beforeEach(async () => {
-            if (!extensionId) {
-                return;
-            }
-            extPage = await browser.newPage();
-            await extPage.goto(
-                `chrome-extension://${extensionId}/src/options/options.html`,
-                { waitUntil: 'networkidle0' }
-            );
-        });
-
-        afterEach(async () => {
-            if (extPage) {
-                await extPage.close();
-            }
-        });
-
-        test('설정 조회 메시지 응답', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            const response = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_SETTINGS' },
-                        (response) => resolve(response)
-                    );
-                });
-            });
-
-            expect(response).toBeDefined();
-            expect(response.enabled).toBeDefined();
-        });
-
-        test('통계 조회 메시지 응답', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            const response = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_STATS' },
-                        (response) => resolve(response)
-                    );
-                });
-            });
-
-            expect(response).toBeDefined();
-            expect(response.total).toBeDefined();
-        });
-    });
-
-    describe('성능 메트릭', () => {
-        /**
-         * chrome.runtime 사용을 위해 extension 컨텍스트 페이지에서 실행한다.
-         */
-        let extPage;
-
-        beforeEach(async () => {
-            if (!extensionId) {
-                return;
-            }
-            extPage = await browser.newPage();
-            await extPage.goto(
-                `chrome-extension://${extensionId}/src/options/options.html`,
-                { waitUntil: 'networkidle0' }
-            );
-        });
-
-        afterEach(async () => {
-            if (extPage) {
-                await extPage.close();
-            }
-        });
-
-        test('성능 메트릭 조회 가능', async () => {
-            if (!extensionId) {
-                console.warn('extensionId 없음 - chrome.runtime 테스트 건너뜀');
-                return;
-            }
-
-            const metrics = await extPage.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.runtime.sendMessage(
-                        { type: 'GET_PERFORMANCE_METRICS' },
-                        (response) => resolve(response)
-                    );
-                });
-            });
-
-            expect(metrics).toBeDefined();
-            expect(metrics.analysis).toBeDefined();
-            expect(metrics.cache).toBeDefined();
-            expect(metrics.cache.hitRate).toBeDefined();
-        });
-    });
-
-    describe('컨텍스트 메뉴', () => {
-        test('컨텍스트 메뉴가 생성되어야 함', async () => {
-            if (!extensionWorker) {
-                console.warn('extensionWorker 없음 - 컨텍스트 메뉴 테스트 건너뜀');
-                return;
-            }
-
-            /** Service Worker 컨텍스트에서 컨텍스트 메뉴 생성 확인 */
-            const menuCreated = await extensionWorker.evaluate(() => {
-                return new Promise((resolve) => {
-                    chrome.contextMenus.removeAll(() => {
-                        chrome.contextMenus.create({
-                            id:       'test-menu',
-                            title:    'Test Menu',
-                            contexts: ['image']
-                        }, () => {
-                            resolve(chrome.runtime.lastError ? false : true);
-                        });
-                    });
-                });
-            });
-
-            expect(menuCreated).toBe(true);
-        });
-    });
-
-    describe('스토리지', () => {
-        test('설정 저장 및 불러오기', async () => {
-            if (!extensionWorker) {
-                console.warn('extensionWorker 없음 - 스토리지 테스트 건너뜀');
-                return;
-            }
-
-            const testSettings = {
-                enabled:       true,
-                cacheEnabled:  true,
-                cacheDuration: 3600000
-            };
-
-            /** 설정 저장 */
-            await extensionWorker.evaluate((settings) => {
-                return chrome.storage.local.set({ settings });
-            }, testSettings);
-
-            /** 설정 불러오기 */
-            const loaded = await extensionWorker.evaluate(() => {
-                return chrome.storage.local.get('settings');
-            });
-
-            expect(loaded.settings).toEqual(testSettings);
-        });
-
-        test('통계 데이터 저장', async () => {
-            if (!extensionWorker) {
-                console.warn('extensionWorker 없음 - 스토리지 테스트 건너뜀');
-                return;
-            }
-
-            const testStats = {
-                total: {
-                    scanned: 100,
-                    safe:    80,
-                    caution: 15,
-                    danger:  5
-                }
-            };
-
-            await extensionWorker.evaluate((stats) => {
-                return chrome.storage.local.set({ stats });
-            }, testStats);
-
-            const loaded = await extensionWorker.evaluate(() => {
-                return chrome.storage.local.get('stats');
-            });
-
-            expect(loaded.stats).toEqual(testStats);
-        });
-    });
+const { test,before,after }=require('node:test');
+const assert=require('node:assert/strict');
+const { launchFixtureBrowser,pageHtml }=require('./browserHarness');
+let h;
+before(async()=>{h=await launchFixtureBrowser();},{timeout:30000});
+after(async()=>{if(h)await h.browser.close();});
+test('확장과 설정·팝업 로드 및 메시지 응답',async()=>{
+ assert.match(h.id,/^[a-z]{32}$/);
+ const settings=await h.send('GET_SETTINGS');
+ assert.equal(typeof settings.enabled,'boolean');
+ assert.ok(await h.options.title());
+ assert.equal(settings.prefetchEnabled,false);assert.equal(settings.allowServerAnalysis,false);assert.equal(settings.protectPending,true);
+ assert.equal(await h.options.$$eval('#profileCategories input',nodes=>nodes.length),10);
+ const popup=await h.browser.newPage();await popup.goto(`chrome-extension://${h.id}/src/popup/popup.html`);
+ assert.ok(await popup.title());assert.ok(await popup.$('#statsScanned'));await popup.close();assert.deepEqual(h.errors,[]);
+ const stats=await h.send('GET_STATS');assert.ok(stats.total);assert.ok(stats.today);
+ const metrics=await h.send('GET_PERFORMANCE_METRICS');assert.ok(metrics.analysis);assert.ok(metrics.cache);
 });
+test('설정과 통계의 저장·복원 및 컨텍스트 메뉴 생성',async()=>{
+ const settings=await h.send('GET_SETTINGS');
+ assert.equal((await h.send('UPDATE_SETTINGS',{settings:{...settings,thresholds:{safeMax:.4,cautionMax:.7}}})).success,true);
+ assert.deepEqual((await h.send('GET_SETTINGS')).thresholds,{safeMax:.4,cautionMax:.7});
+ const before=await h.send('GET_STATS');await h.send('UPDATE_STATS',{signalType:'caution'});
+ assert.equal((await h.send('GET_STATS')).total.caution,before.total.caution+1);
+ const stored=await h.options.evaluate(()=>chrome.storage.local.get(['kas_settings','kas_stats']));
+ assert.deepEqual(stored.kas_settings.thresholds,{safeMax:.4,cautionMax:.7});assert.ok(stored.kas_stats.total);
+ const menu=await h.options.evaluate(()=>new Promise(resolve=>chrome.contextMenus.create({id:'fixture-menu',title:'fixture',contexts:['image']},()=>resolve(!chrome.runtime.lastError))));
+ assert.equal(menu,true);
+});
+test('미확인 이미지는 가리고 직접 공개할 때만 노출',async()=>{
+ const page=await h.newDcPage(pageHtml());
+ await page.waitForFunction(()=>document.querySelector('.kas-protection-notice')?.textContent.includes('공개 가능'));
+ assert.deepEqual(await page.$$eval('.writing_view_box img',images=>images.map(img=>({status:img.dataset.kasStatus,visible:getComputedStyle(img).visibility}))),
+ [{status:'unchecked',visible:'hidden'},{status:'unchecked',visible:'hidden'}]);
+ await page.click('.kas-protection-notice button');
+ assert.deepEqual(await page.$$eval('.writing_view_box img',images=>images.map(img=>getComputedStyle(img).visibility)),['visible','visible']);
+ await page.close();
+});
+test('동적 이미지·주소 변경에 독립 검사와 가림 적용',async()=>{
+ const page=await h.newDcPage(pageHtml([3]));
+ await page.waitForFunction(()=>document.querySelector('img')?.dataset.kasStatus==='unchecked');
+ await page.evaluate(()=>{const img=document.createElement('img');img.src='https://dcimg4.dcinside.com/viewimage.php?id=4';document.querySelector('.write_div').append(img);});
+ await page.waitForFunction(()=>document.querySelectorAll('.write_div img')[1]?.dataset.kasStatus==='unchecked');
+ assert.equal(await page.$eval('.write_div img:last-child',img=>getComputedStyle(img).visibility),'hidden');
+ await page.click('.kas-protection-notice button');
+ await page.$eval('.write_div img:last-child',img=>{img.src='https://dcimg5.dcinside.com/viewimage.php?id=5';});
+ await page.waitForFunction(()=>document.querySelector('.write_div img:last-child')?.dataset.kasCheckedSrc?.includes('id=5'));
+ assert.equal(await page.$eval('.write_div img:last-child',img=>getComputedStyle(img).visibility),'hidden');
+ await page.$eval('.write_div img:last-child',img=>{img.srcset='https://dcimg14.dcinside.com/viewimage.php?id=14 1x';});
+ await page.waitForFunction(()=>document.querySelector('.write_div img:last-child')?.dataset.kasCheckedSrc?.includes('id=14'));
+ assert.equal(await page.$eval('.write_div img:last-child',img=>getComputedStyle(img).visibility),'hidden');await page.close();
+});
+test('개인 범주 제외가 서버 요청과 의료 판정에 연결',async()=>{
+ h.state.mode='medical';h.state.revision='fixture:2';
+ const settings=await h.send('GET_SETTINGS');
+ assert.equal((await h.send('UPDATE_SETTINGS',{settings:{...settings,profile:{version:1,categories:{medical:{enabled:false}},domainExceptions:[]}}})).success,true);
+ const page=await h.newDcPage(pageHtml([6]));
+ await page.waitForFunction(()=>document.querySelector('.write_div img')?.dataset.kasChecked==='true');
+ assert.equal(await page.$eval('.write_div img',img=>img.dataset.kasStatus),'safe');
+ assert.equal(JSON.parse(h.requests.findLast(row=>row.pathname==='/api/check/hash').postData).profile.categories.medical.enabled,false);
+ await page.close();h.state.mode='unknown';
+});
+test('자동 검사를 꺼도 본문 수동 재검사는 동작',async()=>{
+ const settings=await h.send('GET_SETTINGS');
+ await h.send('UPDATE_SETTINGS',{settings:{...settings,autoScan:false}});
+ const page=await h.newDcPage(pageHtml([10]));
+ await page.waitForSelector('.kas-protection-notice');
+ const before=h.requests.filter(row=>row.pathname==='/api/check/hash').length;
+ await page.click('.kas-protection-notice button:last-child');
+ await page.waitForFunction(()=>document.querySelector('.write_div img')?.dataset.kasStatus==='unchecked');
+ assert.ok(h.requests.filter(row=>row.pathname==='/api/check/hash').length>before);
+ await page.close();await h.send('UPDATE_SETTINGS',{settings});
+});
+test('서버 판정 버전 변경 시 공개했던 정상 이미지도 다시 검사', {timeout:35000}, async()=>{
+ h.state.mode='clean';h.state.revision='fixture:3';
+ const settings=await h.send('GET_SETTINGS');
+ await h.send('UPDATE_SETTINGS',{settings:{...settings,profile:{version:1,categories:{},domainExceptions:[]}}});
+ const page=await h.newDcPage(pageHtml([9]));
+ await page.waitForFunction(()=>document.querySelector('.write_div img')?.dataset.kasStatus==='safe');
+ const downloads=h.requests.filter(row=>row.pathname==='/viewimage.php').length;
+ h.state.mode='medical';h.state.revision='fixture:4';
+ await page.waitForFunction(()=>document.querySelector('.write_div img')?.dataset.kasStatus==='caution',{timeout:30000});
+ assert.equal(await page.$eval('.write_div img',img=>getComputedStyle(img).visibility),'hidden');
+ assert.equal(h.requests.filter(row=>row.pathname==='/viewimage.php').length,downloads);
+ await page.close();h.state.mode='unknown';
+});
+test('판정 버전 조회 실패 시 만료된 정상 이미지 가림과 자동 재수집 금지', {timeout:35000},async()=>{
+ h.state.mode='clean';h.state.revision='fixture:5';
+ const page=await h.newDcPage(pageHtml([11]));
+ await page.waitForFunction(()=>document.querySelector('.write_div img')?.dataset.kasStatus==='safe');
+ await page.$eval('.write_div img',img=>{img.dataset.kasCheckedAt=String(Date.now()-61000);});
+ const downloads=h.requests.filter(row=>row.pathname==='/viewimage.php').length;
+ h.state.revision=null;
+ await page.waitForFunction(()=>document.querySelector('.write_div img')?.dataset.kasStatus==='unchecked',{timeout:30000});
+ assert.equal(await page.$eval('.write_div img',img=>getComputedStyle(img).visibility),'hidden');
+ assert.equal(h.requests.filter(row=>row.pathname==='/viewimage.php').length,downloads);
+ await page.close();h.state.mode='unknown';
+});
+test('content 메시지에는 키가 없고 설정 변경은 거부',async()=>{
+ const settings=await h.send('GET_SETTINGS');
+ await h.send('UPDATE_SETTINGS',{settings:{...settings,nsfwApiKey:'fixture-secret',apis:{...settings.apis,gpt4oMini:{enabled:true,apiKey:'fixture-ai-secret',priority:1}}}});
+ const page=await h.newDcPage(pageHtml([]));
+ const client=await page.createCDPSession();let isolated;const contexts=[];
+ client.on('Runtime.executionContextCreated',event=>{if(event.context.auxData?.isDefault===false)contexts.push(event.context.id);});
+ await client.send('Runtime.enable');
+ for(const contextId of contexts){
+  const probe=await client.send('Runtime.evaluate',{contextId,expression:"typeof chrome !== 'undefined' && chrome.runtime?.id",returnByValue:true});
+  if(probe.result.value===h.id){isolated=contextId;break;}
+ }
+ assert.ok(isolated,'실제 확장 content 실행 컨텍스트가 필요합니다.');
+ const read=await client.send('Runtime.evaluate',{contextId:isolated,expression:"chrome.runtime.sendMessage({type:'GET_SETTINGS'})",awaitPromise:true,returnByValue:true});
+ assert.ok(read.result.value);assert.equal(read.exceptionDetails,undefined);
+ assert.equal(JSON.stringify(read.result.value).includes('fixture-secret'),false);
+ assert.equal(JSON.stringify(read.result.value).includes('fixture-ai-secret'),false);
+ const direct=await client.send('Runtime.evaluate',{contextId:isolated,expression:"chrome.storage.local.get('kas_settings').then(()=>false,()=>true)",awaitPromise:true,returnByValue:true});
+ assert.equal(direct.result.value,true,'content에서 원본 키 저장소를 읽을 수 없어야 합니다.');
+ const denied=await client.send('Runtime.evaluate',{contextId:isolated,expression:"chrome.runtime.sendMessage({type:'UPDATE_SETTINGS',settings:{enabled:false}})",awaitPromise:true,returnByValue:true});
+ assert.equal(denied.result.value.code,'INVALID_MESSAGE');await page.close();
+});
+test('실제 페이지 JavaScript 오류 없음',()=>assert.deepEqual(h.errors,[]));

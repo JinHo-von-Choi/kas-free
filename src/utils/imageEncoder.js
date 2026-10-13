@@ -1,3 +1,4 @@
+import { getDcRequestBroker } from '../background/DcRequestBroker.js';
 /**
  * 이미지 인코딩 유틸리티
  * @author 최진호
@@ -42,19 +43,15 @@ export function getThumbnailUrl(imageUrl) {
  * @param {boolean} useThumbnail - 썸네일 사용 여부 (기본: true)
  * @returns {Promise<string>} Base64 인코딩된 이미지 (순수 Base64 문자열)
  */
-export async function imageUrlToBase64(imageUrl, useThumbnail = true) {
+export async function imageUrlToBase64(imageUrl, useThumbnail = false, context = {}) {
     // 성능 최적화: 디시인사이드 이미지는 썸네일 우선 사용
     const optimizedUrl = useThumbnail && isDcinsideImageUrl(imageUrl)
         ? getThumbnailUrl(imageUrl)
         : imageUrl;
 
-    console.log('[ImageEncoder] 이미지 로딩:', {
-        original: imageUrl.substring(0, 100),
-        optimized: optimizedUrl.substring(0, 100),
-        thumbnail: useThumbnail && isDcinsideImageUrl(imageUrl)
-    });
 
-    const result = await analyzeAndEncodeImage(optimizedUrl);
+
+    const result = await analyzeAndEncodeImage(optimizedUrl, context);
 
     if (result.type === 'extraction') {
         // GIF 프레임 추출
@@ -73,7 +70,7 @@ export async function imageUrlToBase64(imageUrl, useThumbnail = true) {
  * @param {string} imageUrl - 이미지 URL
  * @returns {Promise<object>} { type, imageUrl, extraction?, mimeType }
  */
-export async function analyzeAndEncodeImage(imageUrl) {
+export async function analyzeAndEncodeImage(imageUrl, context = {}) {
     try {
         /**
          * Chrome Extension Service Worker는 host_permissions가 있으면
@@ -84,16 +81,7 @@ export async function analyzeAndEncodeImage(imageUrl) {
          * 2. 쿠키 인증이 필요할 수 있으므로 credentials: 'include'
          * 3. 일반 CORS 모드로 시도 (Extension 특권으로 CORS 우회됨)
          */
-        const response = await fetch(imageUrl, {
-            credentials:     'include',          // 쿠키 포함 (인증된 이미지 지원)
-            referrerPolicy:  'no-referrer'       // Referer 제거 (403 방지)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const blob = await response.blob();
+        const blob = await getDcRequestBroker().request(imageUrl, { ...context, kind: 'image' });
 
         if (!blob || blob.size === 0) {
             throw new Error('Empty blob received');
@@ -161,6 +149,7 @@ export async function analyzeAndEncodeImage(imageUrl) {
             mimeType: mimeType
         };
     } catch (error) {
+        if (error.name === 'DcRequestError') throw error;
         console.error('[ImageEncoder] Image encoding error:', error);
 
         /**

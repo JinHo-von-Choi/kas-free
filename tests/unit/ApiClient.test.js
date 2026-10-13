@@ -395,3 +395,25 @@ describe('ApiClient', () => {
         });
     });
 });
+
+
+describe('실제 AI 제공자 응답 경계', () => {
+    const valid = { scores: Object.fromEntries(['gore','violence','death','disturbing','insects','medical','shock','animal_cruelty','nsfw_porn','nsfw_sexy'].map(name=>[name,0])), is_harmful:false, suggested_severity:1, suggestedAction:'pass', final_score:0, description:'fixture', reasoning:'fixture' };
+    test.each(['callGpt4oMini','callClaudeHaiku','callGeminiFlash'])('%s는 누락된 응답을 안전으로 보정하지 않는다',async method=>{
+        const client=new ApiClient({enableAdaptiveTimeout:false});
+        client.fetchWithRetry=jest.fn().mockResolvedValue({ok:true,json:async()=>({choices:[{message:{content:'{}'}}],content:[{text:'{}'}],candidates:[{content:{parts:[{text:'{}'}]}}]})});
+        await expect(client[method]('fixture-key','data:image/png;base64,AA==',false)).rejects.toThrow('판정을 보류');
+    });
+    test('완전한 응답만 반환하고 NaN 점수는 거부한다',async()=>{
+        const client=new ApiClient({enableAdaptiveTimeout:false});
+        client.fetchWithRetry=jest.fn().mockResolvedValue({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify(valid)}}]})});
+        await expect(client.callGpt4oMini('fixture-key','fixture-image')).resolves.toEqual(valid);
+        client.fetchWithRetry.mockResolvedValue({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({...valid,scores:{...valid.scores,gore:null}})}}]})});
+        await expect(client.callGpt4oMini('fixture-key','fixture-image')).rejects.toThrow('판정을 보류');
+    });
+    test('재시도 대기는 사용자 취소 즉시 끝난다',async()=>{
+        const client=new ApiClient({enableAdaptiveTimeout:false});const controller=new AbortController();
+        const pending=client.delay(60000,controller.signal);controller.abort();
+        await expect(pending).rejects.toMatchObject({retryable:false});
+    });
+});

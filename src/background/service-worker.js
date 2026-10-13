@@ -1,3 +1,7 @@
+import { getDcRequestBroker, validateDcUrl } from './DcRequestBroker.js';
+import { validateMessage, contentSettings } from './messageSecurity.js';
+import { DecisionRevisionClient } from './DecisionRevisionClient.js';
+import { extractPostImages, extractPostManifest, aggregatePostResults } from './postManifest.js';
 /**
  * ========================================
  * 카-스 프리 Service Worker (백그라운드)
@@ -42,10 +46,10 @@ import {
     getStats,         // 통계 불러오기
     updateStats       // 통계 업데이트
 } from '../utils/storage.js';
-import { MESSAGE_TYPES, DEFAULT_SETTINGS, DC_FETCH_OPTIONS, DC_IMAGE_FETCH_OPTIONS } from '../utils/constants.js'; // 상수 정의
+import { MESSAGE_TYPES, DEFAULT_SETTINGS } from '../utils/constants.js'; // 상수 정의
 import { imageUrlToBase64 } from '../utils/imageEncoder.js';      // 이미지 URL → Base64 변환
 import { logError } from '../utils/errorHandler.js';              // 에러 로깅
-import { generateAllHashes, generateAllHashesFromBlob } from '../utils/imageHash.js'; // 이미지 해시 생성
+import { generateAllHashesFromBlob } from '../utils/imageHash.js'; // 이미지 해시 생성
 
 // 최적화 모듈 (성능 향상용)
 import { AdvancedCacheManager } from './AdvancedCacheManager.js';   // LFU 캐싱 (자주 쓰는 데이터 빠르게 가져옴)
@@ -55,7 +59,6 @@ import { ErrorRecoveryManager } from './ErrorRecoveryManager.js';   // 에러 �
 import { getPerformanceMonitor } from '../utils/PerformanceMonitor.js'; // 성능 측정
 import { getResourceManager } from '../utils/ResourceManager.js';       // 메모리 관리
 import { MemoryManager, CachePriority } from '../sw/memoryManager.js';   // Cache Storage 메모리 관리
-import { getFetchQueueManager } from '../utils/fetchQueueManager.js';    // Fetch 요청 Queue (차단 방지)
 
 // ========================================
 // 전역 변수 (Global Variables)
@@ -134,14 +137,6 @@ let resourceManager = null;
 let performanceMonitor = null;
 
 /**
- * Hash Worker (해시 생성 전용 WebWorker)
- * - 이미지 해시를 별도 스레드에서 생성 (병렬 처리)
- * - 주의: Service Worker 환경에서는 Worker API 사용 불가
- * - 현재 null로 유지 (동기 방식으로 폴백)
- */
-let hashWorker = null;
-
-/**
  * Memory Manager (Cache Storage 메모리 관리)
  * - 브라우저 Cache Storage API 기반 캐시 관리
  * - LRU 기반 자동 정리 (Least Recently Used)
@@ -157,7 +152,6 @@ let memoryManager = null;
  * - Queue 구조로 순차 처리
  * - 캐시 히트는 영향 없음 (fetch 안 함)
  */
-let fetchQueueManager = null;
 
 /** 통계 업데이트 직렬화 큐 — 경쟁 조건 방지 */
 let statsUpdateQueue = Promise.resolve();
@@ -178,7 +172,15 @@ let statsUpdateQueue = Promise.resolve();
  * 1. 먼저 만든 것을 다음 것이 사용하기 때문
  * 2. 예: currentSettings를 먼저 불러와야 cacheManager가 사용 가능
  */
-async function initialize() {
+let initialization;
+const storageAccessReady = chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+function initialize() {
+    if (!initialization) initialization = initializeModules().catch(error => { initialization = null; throw error; });
+    return initialization;
+}
+
+async function initializeModules() {
+    await storageAccessReady;
     console.log('[Kas-Free] Service Worker 초기화 (v1.1.0)');
 
     // ========================================
@@ -289,33 +291,6 @@ async function initialize() {
     console.log('[Kas-Free] Memory Manager 초기화 완료 (Cache Storage)');
 
     // ========================================
-    // 10-1단계: Fetch Queue Manager 초기화 (디시인사이드 차단 방지)
-    // ========================================
-    // 짧은 시간 내 너무 많은 fetch 요청 → 디시인사이드 차단
-    // - 초당 3개 제한 (333ms 간격)
-    // - Queue 구조로 순차 처리
-    // - 캐시 히트는 영향 없음 (fetch 요청 자체가 안 나감)
-    fetchQueueManager = getFetchQueueManager({
-        requestsPerSecond: 3,   // 초당 3개
-        maxQueueSize: 100       // 최대 100개 대기
-    });
-    console.log('[Kas-Free] Fetch Queue Manager 초기화 완료 (초당 3개)');
-
-    // ========================================
-    // 11단계: Hash Worker 초기화 (실패)
-    // ========================================
-    // Service Worker 환경의 제약 사항:
-    // - Worker API를 사용할 수 없음 (별도 스레드 생성 불가)
-    // - 이유: Service Worker 자체가 이미 별도 스레드이기 때문
-    //
-    // 해결책:
-    // - hashWorker를 null로 유지
-    // - generateHashesAsync() 함수에서 자동으로 동기 방식으로 폴백
-    // - 성능: 병렬 100ms → 동기 200ms (여전히 빠름)
-    hashWorker = null;
-    console.log('[Kas-Free] Service Worker 환경: 동기 해시 생성 모드 사용');
-
-    // ========================================
     // 12단계: 만료된 캐시 정리
     // ========================================
     // TTL(Time To Live) 시간이 지난 캐시 데이터 삭제
@@ -327,6 +302,7 @@ async function initialize() {
         }
     });
 
+    await getDcRequestBroker().ready;
     console.log('[Kas-Free] Service Worker 초기화 완료');
 }
 
@@ -349,45 +325,30 @@ async function initialize() {
  * - "비동기 응답을 보낼 거예요"라는 신호
  * - 안 쓰면 sendResponse가 작동하지 않음 (중요!)
  */
+const activeRequests = new Map();
+const decisionRevisionClient = new DecisionRevisionClient();
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    let responded = false;  // sendResponse 호출 여부 추적
-
-    /**
-     * ANALYZE_IMAGE는 타임아웃을 적용하지 않는다
-     *
-     * 왜?
-     * - FetchQueueManager(초당 3개) + 다수 동시 요청 = 큐 대기 시간이 30s 초과 가능
-     * - 30s 타임아웃 후 sendResponse → Chrome이 SW 종료 → 큐 전체 소실
-     * - 큐 소실 시 해당 요청은 분석되지 않고 캐시에도 저장되지 않음
-     * - 대신 content.js의 30s 타임아웃(분석 요청 타임아웃)이 대기를 제어
-     *
-     * 그 외 메시지: 10초 타임아웃 (UI 응답성 유지)
-     */
-    const isAnalysis  = message.type === MESSAGE_TYPES.ANALYZE_IMAGE;
-    const timeoutMs   = isAnalysis ? null : 10000;
-    const timeoutId   = timeoutMs
-        ? setTimeout(() => {
-            if (!responded) {
-                responded = true;
-                sendResponse({
-                    error: '처리 시간 초과. 잠시 후 다시 시도해주세요.',
-                    timeout: true,
-                    userFriendly: true
-                });
-            }
-        }, timeoutMs)
-        : null;
-
-    // 실제 메시지 처리
-    handleMessage(message, sender, (response) => {
-        if (!responded) {
-            responded = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            sendResponse(response);
-        }
-    });
-
-    return true;  // 필수: 비동기 응답 허용
+    let privileged;
+    try { privileged = validateMessage(message, sender, chrome.runtime.id); }
+    catch (error) { sendResponse({ error: error.message, code: 'INVALID_MESSAGE', status: 'error' }); return false; }
+    const controller = new AbortController();
+    const requestId = `${sender.tab?.id ?? 'extension'}:${message.requestId || crypto.randomUUID()}`;
+    if (activeRequests.has(requestId)) {
+        sendResponse({ error: '이미 처리 중인 요청 ID입니다.', status: 'error' }); return false;
+    }
+    const timeoutMs = message.type === 'VERIFY_WITH_AI' ? 60000 : message.type === 'ANALYZE_IMAGES' ? 90000 : 30000;
+    const context = { signal: controller.signal, deadline: Date.now() + timeoutMs,
+        tabId: sender.tab?.id ?? null, priority: message.userInitiated === true || message.type === 'FETCH_DC_POST' || message.type === 'VERIFY_WITH_AI' ? 1 : 0 };
+    activeRequests.set(requestId, { controller, tabId: context.tabId });
+    let responded = false;
+    const timeout = setTimeout(() => {
+        controller.abort();
+        if (!responded) { responded = true; sendResponse({ status: 'deferred', code: 'DEADLINE_EXCEEDED', error: '조회 시간을 초과했습니다. 잠시 후 직접 다시 시도하세요.' }); }
+    }, timeoutMs);
+    handleMessage({ ...message, context, privileged }, sender, response => {
+        if (!responded) { responded = true; sendResponse(response); }
+    }).finally(() => { clearTimeout(timeout); activeRequests.delete(requestId); });
+    return true;
 });
 
 /**
@@ -416,11 +377,41 @@ async function handleMessage(message, sender, sendResponse) {
     const { type } = message;
 
     try {
+        await initialize();
         // ========================================
         // switch-case: type 값에 따라 분기
         // ========================================
         // if-else 여러 개 쓰는 것보다 깔끔함
         switch (type) {
+            case 'FETCH_DC_POST':
+                sendResponse({ html: await getDcRequestBroker().request(message.postUrl, { ...message.context, kind: 'html' }) });
+                break;
+            case 'GET_PROTECTION_SETTINGS':
+                sendResponse({ enabled: currentSettings.enabled, protectPending: currentSettings.protectPending });
+                break;
+            case 'GET_DC_REQUEST_STATUS':
+                sendResponse(getDcRequestBroker().getStatus());
+                break;
+            case 'GET_DECISION_REVISION':
+                sendResponse({ decisionRevision: await decisionRevisionClient.getRevision() });
+                break;
+            case 'RESUME_DC_REQUESTS':
+                await getDcRequestBroker().resume();
+                sendResponse({ success: true });
+                break;
+            case 'CANCEL_DC_REQUESTS':
+                for (const item of activeRequests.values()) if (item.tabId === sender.tab?.id) item.controller.abort();
+                sendResponse({ success: true });
+                break;
+            case 'ANALYZE_IMAGES': {
+                const results = [];
+                for (const imageUrl of [...new Set(message.imageUrls)]) {
+                    if (message.context.signal.aborted) break;
+                    results.push({ imageUrl, ...await handleAnalyzeImage({ ...message, imageUrl }) });
+                }
+                sendResponse({ results, complete: results.length === new Set(message.imageUrls).size });
+                break;
+            }
             // 이미지 분석 요청
             case MESSAGE_TYPES.ANALYZE_IMAGE:
                 const result = await handleAnalyzeImage(message);
@@ -432,7 +423,8 @@ async function handleMessage(message, sender, sendResponse) {
                 const aiResult = await aiVerificationHandler.handleVerification(
                     message,
                     fetchPostImage,          // 게시글에서 이미지 추출 함수
-                    getOrCreateReporterId    // 신고자 ID 생성 함수
+                    getOrCreateReporterId,   // 신고자 ID 생성 함수
+                    message.context
                 );
                 sendResponse(aiResult);
                 break;
@@ -440,7 +432,7 @@ async function handleMessage(message, sender, sendResponse) {
             // 설정 조회 요청
             case MESSAGE_TYPES.GET_SETTINGS:
                 const settings = await getSettings();
-                sendResponse(settings);
+                sendResponse(message.privileged ? settings : contentSettings(settings));
                 break;
 
             // 설정 업데이트 요청
@@ -527,12 +519,15 @@ async function handleMessage(message, sender, sendResponse) {
         // 사용자 친화적 에러 메시지
         // error.userFriendly가 true면 에러 메시지 그대로 사용
         // 아니면 일반적인 메시지 사용
-        const userMessage = error.userFriendly
+        const userMessage = error.userFriendly || error.name === 'DcRequestError'
             ? error.message
             : '알 수 없는 오류가 발생했습니다.';
 
         sendResponse({
             error: userMessage,
+            status: error.code === 'DC_DEFERRED' ? 'deferred' : error.code === 'CANCELLED' ? 'cancelled' : 'error',
+            code: error.code || 'PROCESSING_FAILED',
+            retryAt: error.retryAt || null,
             userFriendly: true
         });
     }
@@ -558,131 +553,34 @@ async function handleMessage(message, sender, sendResponse) {
  * @returns {Promise<object>} 분석 결과 { status, riskScore, categories }
  */
 async function handleAnalyzeImage(message) {
-    // ========================================
-    // 메시지에서 필요한 정보 추출
-    // ========================================
-    // 구조 분해 할당: message.postNo, message.postUrl을 각각 변수로 추출
-    const { postNo, postUrl } = message;
-
-    // 성능 측정 시작
-    // timerId를 저장해뒀다가 나중에 endTimer(timerId)로 종료
-    const timerId = performanceMonitor.startTimer('analysis');
-
-    // ========================================
-    // 확장 프로그램 활성화 여부 확인
-    // ========================================
-    // 사용자가 설정에서 비활성화했으면 분석하지 않음
-    if (!currentSettings.enabled) {
-        return {
-            error: '확장 프로그램이 비활성화되어 있습니다.',
-            userFriendly: true  // 사용자에게 그대로 표시해도 되는 메시지
-        };
-    }
-
-    // ========================================
-    // 1단계: 캐시 확인 (가장 먼저!)
-    // ========================================
-    // 왜 캐시를 먼저 확인하나요?
-    // - 같은 게시글을 여러 번 보는 경우가 많음
-    // - 캐시 히트율 90% (100번 중 90번은 캐시에서 바로 반환)
-    // - 분석 시간: 캐시 있을 때 5ms vs 캐시 없을 때 300ms
-    const cachedResult = await cacheManager.getAnalysisResult(postUrl);
-
-    if (cachedResult) {
-        // 캐시에서 찾음! 바로 반환
-        console.log('[Kas-Free] 캐시 히트:', postNo);
-
-        // 성능 측정 종료
-        const elapsed = performanceMonitor.endTimer(timerId);
-        await performanceMonitor.recordAnalysisTime(elapsed);
-
-        return cachedResult;  // 이전에 분석한 결과 그대로 반환
-    }
-
-    // ========================================
-    // 2단계: 캐시에 없음 → 실제 분석 진행
-    // ========================================
+    if (!currentSettings.enabled) return { status: 'unchecked', error: '확장 프로그램이 비활성화되어 있습니다.' };
+    const context = message.context || {};
+    const timer = performanceMonitor.startTimer('analysis');
     try {
-        // ========================================
-        // 2-1. 게시글 HTML에서 이미지 URL 추출
-        // ========================================
-        // 예: <meta property="og:image" content="https://...jpg">
-        const imageUrl = await fetchPostImage(postUrl);
-
-        if (!imageUrl) {
-            // 이미지를 찾지 못함 (텍스트만 있는 게시글)
-            const elapsed = performanceMonitor.endTimer(timerId);
-            await performanceMonitor.recordAnalysisTime(elapsed);
-
-            return {
-                status: 'unchecked',  // 검사하지 않음
-                riskScore: 0,
-                categories: {},
-                error: '이미지를 찾을 수 없습니다.',
-                userFriendly: true
-            };
-        }
-
-        // ========================================
-        // 2-2. 이미지 분석 (1차 + 2차)
-        // ========================================
-        // analyzeImage() 함수가 실제 분석 로직 수행
-        const result = await analyzeImage(imageUrl, postUrl);
-
-        // ========================================
-        // 2-3. 결과에 imageUrl 추가
-        // ========================================
-        // 왜 추가하나요?
-        // - 나중에 AI 재검증할 때 이미지 URL이 필요
-        // - result 객체에 포함시켜서 함께 캐시에 저장
-        result.imageUrl = imageUrl;
-
-        // ========================================
-        // 2-4. 결과를 캐시에 저장
-        // ========================================
-        // 다음에 같은 게시글을 보면 캐시에서 바로 가져옴
-        await cacheManager.setAnalysisResult(postUrl, result);
-
-        // 성능 측정 종료
-        const elapsed = performanceMonitor.endTimer(timerId);
-        await performanceMonitor.recordAnalysisTime(elapsed);
-
-        return result;
-
-    } catch (error) {
-        // ========================================
-        // 3단계: 에러 발생 → 자동 복구 시도
-        // ========================================
-        console.error('[Kas-Free] 이미지 분석 실패:', error);
-
-        // ErrorRecoveryManager에게 복구 위임
-        if (errorRecoveryManager) {
-            const recovery = await errorRecoveryManager.handleError(error, {
-                postUrl: postUrl,
-                cacheManager: cacheManager
-            });
-
-            console.log('[Kas-Free] 복구 시도 결과:', recovery);
-
-            // 복구 성공 시 (예: 캐시에서 찾음)
-            if (recovery.success && recovery.data) {
-                const elapsed = performanceMonitor.endTimer(timerId);
-                await performanceMonitor.recordAnalysisTime(elapsed);
-                return recovery.data;  // 복구된 데이터 반환
+        const manifest = message.imageUrl ? { imageUrls: [message.imageUrl], unavailableCount: 0 } : extractPostManifest(
+            await getDcRequestBroker().request(message.postUrl, { ...context, kind: 'html' }), message.postUrl);
+        const imageUrls = manifest.imageUrls;
+        if (!imageUrls.length) return { status: 'unchecked', globalVerdict: 'unknown', riskScore: null, categories: {}, error: '검사할 이미지를 찾을 수 없습니다.' };
+        const revisionBefore = await decisionRevisionClient.getRevision();
+        const results = [];
+        for (const imageUrl of imageUrls.slice(0, 100)) {
+            if (context.signal?.aborted) break;
+            try { results.push({ ...await analyzeImage(imageUrl, message.postUrl, context), imageUrl }); }
+            catch (error) {
+                results.push({ imageUrl, status: error.code === 'DC_DEFERRED' ? 'deferred' : error.code === 'CANCELLED' ? 'cancelled' : 'error',
+                    globalVerdict: 'unknown', riskScore: null, categories: {}, code: error.code || 'ANALYSIS_FAILED', error: error.message, retryAt: error.retryAt });
+                break;
             }
         }
-
-        // 복구 실패 → 에러 결과 반환
-        const elapsed = performanceMonitor.endTimer(timerId);
-        await performanceMonitor.recordAnalysisTime(elapsed);
-
-        return {
-            status: 'error',
-            riskScore: 0,
-            categories: {},
-            error: error.message || '이미지 분석에 실패했습니다.',
-            userFriendly: true
-        };
+        const revisionAfter = await decisionRevisionClient.getRevision();
+        return { ...aggregatePostResults(results, imageUrls.length + manifest.unavailableCount), decisionVersion: 2, timestamp: Date.now(),
+            decisionRevision: revisionBefore && revisionBefore === revisionAfter ? revisionAfter : null };
+    } catch (error) {
+        return { status: error.code === 'DC_DEFERRED' ? 'deferred' : error.code === 'CANCELLED' ? 'cancelled' : 'error',
+            globalVerdict: 'unknown', riskScore: null, categories: {}, code: error.code || 'ANALYSIS_FAILED',
+            error: error.message || '검사를 완료할 수 없습니다.', retryAt: error.retryAt || null };
+    } finally {
+        await performanceMonitor.recordAnalysisTime(performanceMonitor.endTimer(timer));
     }
 }
 
@@ -713,428 +611,34 @@ async function handleAnalyzeImage(message) {
  * @param {string} pageUrl - 페이지 URL (선택, 디버깅용)
  * @returns {Promise<object>} 최종 분석 결과 { status, riskScore, categories, primary, secondary }
  */
-async function analyzeImage(imageUrl, pageUrl = null) {
-    // 1차, 2차 검증 결과를 저장할 변수
-    let primaryResult = null;    // 해시 검사 결과
-    let secondaryResult = null;  // 이미지 전송 검사 결과 (필요시에만)
-
-    // ========================================
-    // 1차 검증: 해시만 전송 (POST /api/check/hash)
-    // ========================================
-    // 왜 try-catch로 감싸나요?
-    // - 해시 검사가 실패해도 프로그램이 멈추지 않도록
-    // - 실패해도 2차 검증으로 넘어감 (보험)
-    try {
-        primaryResult = await analyzeImageWithHash(imageUrl);
-        console.log('[Kas-Free] 1차 검증 결과 (Hash):', primaryResult);
-    } catch (error) {
-        // 에러 로깅 (디버그 모드일 때만 상세 로그)
-        logError('해시 검사', error, currentSettings.debugMode);
+async function analyzeImage(imageUrl, pageUrl = null, context = {}) {
+    validateDcUrl(imageUrl);
+    const options = { ...context, profile: currentSettings.profile, pageUrl };
+    const broker = getDcRequestBroker();
+    const hitsBefore = broker.getStatus().cacheHits;
+    const blob = await broker.request(imageUrl, { ...context, kind: 'image' });
+    if (broker.getStatus().cacheHits > hitsBefore) await performanceMonitor.recordCacheHit();
+    else await performanceMonitor.recordCacheMiss();
+    const hashTimer = performanceMonitor.startTimer('hash');
+    let hashes;
+    try { hashes = await generateAllHashesFromBlob(blob); }
+    finally { await performanceMonitor.recordHashTime(performanceMonitor.endTimer(hashTimer)); }
+    const reporterId = await getOrCreateReporterId();
+    const apiTimer = performanceMonitor.startTimer('api');
+    let primary;
+    let failed = false;
+    try { primary = await hashChecker.check(hashes, 10, reporterId, options); }
+    catch (error) { failed = true; throw error; }
+    finally { await performanceMonitor.recordApiTime(performanceMonitor.endTimer(apiTimer), failed); }
+    if (context.signal?.aborted) throw new Error('검사가 취소됐습니다.');
+    if (primary.globalVerdict === 'unknown' && currentSettings.allowServerAnalysis) {
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const chunks = [];
+        for (let offset = 0; offset < bytes.length; offset += 32768) chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 32768)));
+        const base64 = btoa(chunks.join(''));
+        return nsfwServer.check(base64, reporterId, options);
     }
-
-    // ========================================
-    // 1차 검증 결과 판정
-    // ========================================
-    if (primaryResult) {
-        // ========================================
-        // riskScore → 신호등 색상 변환
-        // ========================================
-        // determineStatus() 함수 사용
-        // - riskScore 0~29: 'safe' (초록)
-        // - riskScore 30~49: 'caution' (주황)
-        // - riskScore 50~100: 'danger' (빨강)
-        const status = determineStatus(primaryResult.riskScore);
-
-        // 디버깅용 로그
-        console.log('[Kas-Free] ===== 검증 결과 =====');
-        console.log('[Kas-Free] status:', status);
-        console.log('[Kas-Free] primaryResult.matched:', primaryResult.matched);
-        console.log('[Kas-Free] riskScore:', primaryResult.riskScore);
-
-        // ========================================
-        // 케이스 1: 안전 (초록 신호등)
-        // ========================================
-        // 1차 검증만으로 충분 → 바로 종료
-        if (status === 'safe') {
-            console.log('[Kas-Free] 안전 → 검증 완료');
-            return buildFinalResult(primaryResult, null, status);
-        }
-
-        // ========================================
-        // 케이스 2: 주의/위험 (주황/빨강 신호등)
-        // ========================================
-        // 2차 검증 필요 → 실제 이미지를 전송하여 정밀 검사
-        if (status === 'caution' || status === 'danger') {
-            try {
-                console.log('[Kas-Free] 주의/위험 신호등 감지, 이미지 전송하여 정밀 검사');
-
-                // ========================================
-                // 2-1. reporterId 가져오기 (익명 신고자 ID)
-                // ========================================
-                // 저장되어 있으면 기존 ID 사용, 없으면 새로 생성
-                const reporterId = await getOrCreateReporterId();
-
-                // ========================================
-                // 2-2. 이미지를 Base64로 인코딩
-                // ========================================
-                // 왜 Base64로 변환하나요?
-                // - 이미지 파일을 텍스트로 변환 (JSON에 포함 가능)
-                // - API 요청 body에 포함하여 전송
-                const imageBase64 = await imageUrlToBase64(imageUrl);
-
-                // ========================================
-                // 2-3. POST /api/check - 이미지 전송
-                // ========================================
-                // NSFW AI 서버가 실제 이미지를 분석
-                secondaryResult = await nsfwServer.check(imageBase64, reporterId);
-                console.log('[Kas-Free] 2차 검증 결과 (Image):', secondaryResult);
-
-                // ========================================
-                // 2-4. 2차 검증 결과로 최종 판정
-                // ========================================
-                // 1차보다 2차가 더 정확하므로 2차 결과 우선
-                if (secondaryResult) {
-                    const finalStatus = determineStatus(secondaryResult.riskScore);
-                    console.log('[Kas-Free] 최종 판정:', finalStatus);
-                    return buildFinalResult(primaryResult, secondaryResult, finalStatus);
-                }
-            } catch (error) {
-                // 2차 검증 실패 시 → 1차 결과로 판정
-                console.error('[Kas-Free] 2차 검증 실패:', error);
-                logError('이미지 전송 검증', error, currentSettings.debugMode);
-                // catch 블록 끝나면 아래 "1차 결과로 판정"으로 진행
-            }
-        }
-
-        // ========================================
-        // 2차 검증 안 했거나 실패 → 1차 결과로 판정
-        // ========================================
-        return buildFinalResult(primaryResult, null, status);
-    }
-
-    // ========================================
-    // 1차 검증 실패 → 판정 불가(error)로 처리
-    // ========================================
-    // 해시 검사가 실패한 경우 (서버 오류, Unauthorized 등)
-    // - 백엔드 장애 시 "초록불"이 되는 fail-open 구조 방지
-    // - error 상태로 반환하여 사용자에게 "검증 불가" 표시
-    // - 사용자가 직접 "AI 검사" 버튼으로 수동 검사 가능
-    console.log('[Kas-Free] 1차 검증 실패 — 서버 오류, 판정 불가(error)로 처리');
-
-    const errorFallbackResult = {
-        riskScore: -1,
-        detailedScores: {
-            gore: 0,
-            violence: 0,
-            death: 0,
-            disturbing: 0,
-            insects: 0,
-            medical: 0,
-            shock: 0,
-            animal_cruelty: 0,
-            nsfw_porn: 0,
-            nsfw_sexy: 0
-        },
-        categories: {
-            gore: 0,
-            violence: 0,
-            death: 0,
-            disturbing: 0,
-            insects: 0,
-            medical: 0,
-            shock: 0,
-            animal_cruelty: 0,
-            nsfw_porn: 0,
-            nsfw_sexy: 0
-        },
-        source: 'server-error',
-        matched: false
-    };
-
-    return buildFinalResult(errorFallbackResult, null, 'error');
-}
-
-/**
- * FetchQueueManager를 통해 이미지를 1회 fetch하고 모든 해시를 생성한다.
- * - 큐를 통한 순차 처리로 디시인사이드 차단 방지
- * - Blob 공유로 동일 이미지 2회 fetch 방지
- * @param {string} imageUrl - 이미지 URL
- * @returns {Promise<{phash: string, dhash: string, ahash: string}>}
- */
-async function generateHashesViaQueue(imageUrl) {
-    const blob = await fetchQueueManager.enqueue(
-        async () => {
-            const response = await fetch(imageUrl, DC_IMAGE_FETCH_OPTIONS);
-
-            if (response.status === 429) {
-                const retryAfter = response.headers.get('Retry-After');
-                const waitMs     = retryAfter ? parseInt(retryAfter, 10) * 1000 : 10000;
-                fetchQueueManager.triggerPause(waitMs);
-                throw new Error(`[Kas-Free] 429 차단 — ${waitMs}ms 큐 정지`);
-            }
-
-            if (!response.ok) {
-                throw new Error(`[Kas-Free] 이미지 fetch 실패: ${response.status}`);
-            }
-
-            return response.blob();
-        },
-        { postNo: imageUrl }
-    );
-
-    return generateAllHashesFromBlob(blob);
-}
-
-/**
- * 이미지 해시로 DB를 검사한다
- * @param {string} imageUrl - 이미지 URL
- * @returns {Promise<object>}
- */
-async function analyzeImageWithHash(imageUrl) {
-    const hashTimerId = performanceMonitor.startTimer('hash');
-    const apiTimerId  = performanceMonitor.startTimer('api');
-
-    try {
-        // 캐시 확인
-        const cached = await cacheManager.getHashResult(imageUrl);
-        if (cached) {
-            console.log('[Kas-Free] 해시 캐시 히트:', imageUrl);
-            performanceMonitor.endTimer(hashTimerId);
-            performanceMonitor.endTimer(apiTimerId);
-            return cached;
-        }
-
-        // reporterId 가져오기
-        const reporterId = await getOrCreateReporterId();
-
-        // 이미지 해시 생성 (FetchQueue를 통한 순차 처리 — 차단 방지)
-        console.log('[Kas-Free] 이미지 해싱 시작:', imageUrl);
-        const hashes = await generateHashesViaQueue(imageUrl);
-        console.log('[Kas-Free] 해시 생성 완료:', hashes);
-
-        const hashElapsed = performanceMonitor.endTimer(hashTimerId);
-        await performanceMonitor.recordHashTime(hashElapsed);
-
-        // 해시로 DB 검사
-        const result = await hashChecker.check(hashes, 10, reporterId);
-        console.log('[Kas-Free] 해시 검사 완료:', result);
-
-        const apiElapsed = performanceMonitor.endTimer(apiTimerId);
-        await performanceMonitor.recordApiTime(apiElapsed, false);
-
-        // 캐시 저장
-        await cacheManager.setHashResult(imageUrl, hashes, result);
-
-        return result;
-    } catch (error) {
-        console.error('[Kas-Free] 해시 검사 실패:', error);
-
-        const hashElapsed = performanceMonitor.endTimer(hashTimerId);
-        await performanceMonitor.recordHashTime(hashElapsed);
-
-        const apiElapsed = performanceMonitor.endTimer(apiTimerId);
-        await performanceMonitor.recordApiTime(apiElapsed, true);
-
-        throw error;
-    }
-}
-
-/**
- * 이미지 해시를 비동기로 생성한다 (WebWorker 사용)
- * @param {string} imageUrl - 이미지 URL
- * @returns {Promise<object>} { phash, dhash, ahash }
- */
-async function generateHashesAsync(imageUrl) {
-    // WebWorker가 사용 가능한 경우
-    if (hashWorker) {
-        try {
-            return await generateHashesWithWorker(imageUrl);
-        } catch (error) {
-            console.warn('[Kas-Free] Worker 해시 생성 실패, 폴백:', error);
-            // Worker 실패 시 기존 방식으로 폴백
-        }
-    }
-
-    // Worker가 없거나 실패한 경우 기존 방식 사용
-    console.log('[Kas-Free] 기존 방식으로 해시 생성 (Worker 미사용)');
-    return await generateAllHashes(imageUrl);
-}
-
-/**
- * WebWorker로 이미지 해시를 생성한다
- * @param {string} imageUrl - 이미지 URL
- * @returns {Promise<object>} { phash, dhash, ahash }
- */
-async function generateHashesWithWorker(imageUrl) {
-    return new Promise(async (resolve, reject) => {
-        // 타임아웃 설정 (5초)
-        const timeoutId = setTimeout(() => {
-            reject(new Error('Hash Worker 타임아웃 (5초)'));
-        }, 5000);
-
-        try {
-            // 이미지를 Blob으로 다운로드
-            const response = await fetch(imageUrl, DC_IMAGE_FETCH_OPTIONS);
-
-            if (!response.ok) {
-                throw new Error(`이미지 fetch 실패: ${response.status}`);
-            }
-
-            const blob = await response.blob();
-
-            // Worker로 전송
-            hashWorker.postMessage({
-                type: 'GENERATE_HASHES',
-                imageUrl: imageUrl,
-                blob: blob
-            });
-
-            // Worker 응답 대기
-            const messageHandler = (event) => {
-                clearTimeout(timeoutId);
-                hashWorker.removeEventListener('message', messageHandler);
-
-                if (event.data.success) {
-                    console.log('[Kas-Free] Worker 해시 생성 성공:', {
-                        elapsed: `${event.data.elapsed.toFixed(2)}ms`,
-                        hashes: event.data.hashes
-                    });
-                    resolve(event.data.hashes);
-                } else {
-                    reject(new Error(event.data.error || 'Worker 해시 생성 실패'));
-                }
-            };
-
-            hashWorker.addEventListener('message', messageHandler);
-        } catch (error) {
-            clearTimeout(timeoutId);
-            reject(error);
-        }
-    });
-}
-
-/**
- * ========================================
- * 위험 점수 → 신호등 색상 변환 함수
- * ========================================
- *
- * riskScore (0~100)를 사용자가 설정한 민감도에 따라
- * 신호등 색상 (safe/caution/danger)으로 변환
- *
- * 예시 (기본 민감도):
- * - riskScore 0~29   → 'safe' (초록)
- * - riskScore 30~49  → 'caution' (주황)
- * - riskScore 50~100 → 'danger' (빨강)
- *
- * 예시 (민감도 낮음):
- * - riskScore 0~49   → 'safe' (초록)
- * - riskScore 50~69  → 'caution' (주황)
- * - riskScore 70~100 → 'danger' (빨강)
- *
- * 왜 사용자 설정을 따르나요?
- * - 사람마다 민감도가 다름
- * - 예: 학생은 민감도 높게, 성인은 민감도 낮게
- *
- * @param {number} riskScore - 위험 점수 (0~100)
- * @returns {string} 신호등 상태 ('safe' | 'caution' | 'danger')
- */
-function determineStatus(riskScore) {
-    // ========================================
-    // 현재 설정에서 임계값 가져오기
-    // ========================================
-    // 구조 분해 할당으로 safeMax, cautionMax 추출
-    // 예: { safeMax: 30, cautionMax: 50 }
-    const { safeMax, cautionMax } = currentSettings.thresholds;
-
-    // ========================================
-    // if-else로 범위 확인
-    // ========================================
-    // 주의: 순서가 중요! (작은 것부터 체크)
-
-    if (riskScore < safeMax) {
-        // 예: riskScore = 20, safeMax = 30 → 20 < 30 → 'safe'
-        return 'safe';
-    } else if (riskScore < cautionMax) {
-        // 예: riskScore = 40, safeMax = 30, cautionMax = 50
-        //     → 40 >= 30이므로 첫 번째 if는 false
-        //     → 40 < 50이므로 두 번째 if는 true → 'caution'
-        return 'caution';
-    } else {
-        // 나머지 (riskScore >= cautionMax)
-        // 예: riskScore = 80, cautionMax = 50 → 80 >= 50 → 'danger'
-        return 'danger';
-    }
-}
-
-/**
- * ========================================
- * 최종 결과 객체 생성 함수
- * ========================================
- *
- * 1차 검증 결과와 2차 검증 결과를 합쳐서
- * 하나의 최종 결과 객체를 만듦
- *
- * 우선순위:
- * - 2차 검증 결과가 있으면 2차 우선 (더 정확함)
- * - 없으면 1차 검증 결과 사용
- *
- * 반환 객체 구조:
- * {
- *   status: 'safe' | 'caution' | 'danger',  // 신호등 색상
- *   riskScore: 0~100,                        // 위험 점수
- *   categories: { gore: 0.8, nsfw: 0.2 },   // 카테고리별 점수
- *   primary: { ... },                        // 1차 검증 원본 데이터
- *   secondary: { ... } | null,               // 2차 검증 원본 데이터 (있으면)
- *   source: 'hash' | 'image' | 'ai',        // 데이터 출처
- *   timestamp: 1707900000000                 // 분석 시각 (밀리초)
- * }
- *
- * @param {object|null} primary - 1차 검증 결과 (해시 검사)
- * @param {object|null} secondary - 2차 검증 결과 (이미지 전송)
- * @param {string} status - 신호등 상태 ('safe'|'caution'|'danger')
- * @returns {object} 최종 결과 객체
- */
-function buildFinalResult(primary, secondary, status) {
-    // ========================================
-    // 2차 검증 결과가 있으면 우선 사용
-    // ========================================
-    // || 연산자: 왼쪽이 falsy(null, undefined 등)면 오른쪽 사용
-    // 예1: secondary = {...}, primary = {...} → mainResult = secondary
-    // 예2: secondary = null, primary = {...} → mainResult = primary
-    const mainResult = secondary || primary;
-
-    // ========================================
-    // 최종 결과 객체 생성
-    // ========================================
-    return {
-        // 신호등 상태 (함수 인자로 받음)
-        status,
-
-        // 위험 점수 (0~100)
-        // ?. 연산자: mainResult가 null이면 undefined 반환 (에러 안 남)
-        // || 0: undefined면 0으로 대체
-        riskScore: mainResult?.riskScore || 0,
-
-        // 카테고리별 점수
-        // 예: { gore: 0.8, violence: 0.6, nsfw_porn: 0.3 }
-        categories: mainResult?.categories || {},
-
-        // 1차 검증 원본 데이터 (디버깅 및 재검증용)
-        primary: primary,
-
-        // 2차 검증 원본 데이터 (없으면 null)
-        secondary: secondary,
-
-        // 데이터 출처
-        // 'hash': 해시 검사 결과
-        // 'image': 이미지 전송 검사 결과
-        // 'ai': AI 재검증 결과
-        source: mainResult?.source || 'unknown',
-
-        // 분석 시각 (Unix timestamp, 밀리초)
-        // 나중에 "3분 전에 분석됨" 같은 표시에 사용
-        timestamp: Date.now()
-    };
+    return primary;
 }
 
 /**
@@ -1142,76 +646,9 @@ function buildFinalResult(primary, secondary, status) {
  * @param {string} postUrl - 게시글 URL
  * @returns {Promise<string|null>}
  */
-async function fetchPostImage(postUrl) {
-    // ========================================
-    // Fetch Queue Manager를 통한 순차 처리
-    // ========================================
-    // 왜 Queue를 사용하나요?
-    // - 동시에 여러 게시글 fetch → 디시인사이드 차단
-    // - Queue로 순차 처리 (초당 3개) → 차단 방지
-    //
-    // 캐시 히트 시에는 이 함수 자체가 호출 안 됨 (영향 없음)
-
-    // postNo 추출 (디버깅용)
-    const postNo = postUrl.match(/no=(\d+)/)?.[1] || 'unknown';
-
-    return await fetchQueueManager.enqueue(
-        async () => {
-            // 실제 fetch 로직
-            try {
-                const response = await fetch(postUrl, DC_FETCH_OPTIONS);
-
-                if (response.status === 429) {
-                    const retryAfter = response.headers.get('Retry-After');
-                    const waitMs     = retryAfter ? parseInt(retryAfter, 10) * 1000 : 10000;
-                    fetchQueueManager.triggerPause(waitMs);
-                    console.warn('[Kas-Free] 429 차단 — 큐 정지:', waitMs, 'ms');
-                    return null;
-                }
-
-                if (response.status === 503) {
-                    console.warn('[Kas-Free] 503 일시 오류 — 재시도 없이 건너뜀');
-                    return null;
-                }
-
-                if (!response.ok) {
-                    console.log('[Kas-Free] fetch 실패:', response.status);
-                    return null;
-                }
-
-                const html = await response.text();
-
-                // OG 이미지 추출 (정규식)
-                const ogImageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-                if (ogImageMatch && ogImageMatch[1]) {
-                    console.log('[Kas-Free] OG 이미지 발견:', ogImageMatch[1]);
-                    return ogImageMatch[1];
-                }
-
-                // 대체: content가 먼저 오는 경우
-                const ogImageMatch2 = html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:image["']/i);
-                if (ogImageMatch2 && ogImageMatch2[1]) {
-                    console.log('[Kas-Free] OG 이미지 발견 (대체):', ogImageMatch2[1]);
-                    return ogImageMatch2[1];
-                }
-
-                // 본문 첫 이미지 추출 (viewimage.php 패턴)
-                const viewImageMatch = html.match(/src=["'](https?:\/\/dcimg[0-9]\.dcinside\.(?:com|co\.kr)\/viewimage\.php[^"']+)["']/i);
-                if (viewImageMatch && viewImageMatch[1]) {
-                    console.log('[Kas-Free] 본문 이미지 발견:', viewImageMatch[1]);
-                    return viewImageMatch[1];
-                }
-
-                console.log('[Kas-Free] 이미지를 찾을 수 없음');
-                return null;
-
-            } catch (error) {
-                console.error('[Kas-Free] 이미지 URL 추출 실패:', error);
-                return null;
-            }
-        },
-        { postNo }  // 메타데이터 (디버깅용)
-    );
+async function fetchPostImage(postUrl, context = {}) {
+    const html = await getDcRequestBroker().request(postUrl, { ...context, kind: 'html' });
+    return extractPostImages(html, postUrl)[0] || null;
 }
 
 /**
@@ -1219,7 +656,8 @@ async function fetchPostImage(postUrl) {
  * @param {object} newSettings - 새 설정
  */
 async function handleUpdateSettings(newSettings) {
-    await saveSettings(newSettings);
+    if (!await saveSettings(newSettings)) throw new Error('설정을 저장하지 못했습니다.');
+    newSettings = await getSettings();
     currentSettings = newSettings;
 
     // 모듈 설정 업데이트
@@ -1243,7 +681,7 @@ async function handleUpdateSettings(newSettings) {
         try {
             await chrome.tabs.sendMessage(tab.id, {
                 type: 'SETTINGS_UPDATED',
-                settings: newSettings
+                settings: contentSettings(newSettings)
             });
         } catch {
             // 탭이 응답하지 않을 수 있음
@@ -1476,7 +914,7 @@ async function getOrCreateReporterId() {
     if (_r.reporterId && _v(_r.reporterId)) return _r.reporterId;
     const _n = _g();
     await chrome.storage.local.set({ reporterId: _n });
-    console.log('[Kas-Free] 새로운 reporterId 생성:', _n);
+
     return _n;
 }
 
@@ -1540,7 +978,6 @@ function _g() {
  */
 async function handleWhitelistRequest(imageUrl, pageUrl, tab) {
     try {
-        console.log('[Kas-Free] 화이트리스트 요청 시작:', imageUrl);
 
         // 1. content script에 사유 입력 요청
         const response = await chrome.tabs.sendMessage(tab.id, {
@@ -1548,7 +985,6 @@ async function handleWhitelistRequest(imageUrl, pageUrl, tab) {
             imageUrl: imageUrl
         });
 
-        console.log('[Kas-Free] content script 응답:', response);
 
         if (!response || response.cancelled) {
             console.log('[Kas-Free] 사용자가 요청 취소 또는 응답 없음');
@@ -1563,17 +999,14 @@ async function handleWhitelistRequest(imageUrl, pageUrl, tab) {
         const reporterId = await getOrCreateReporterId();
 
         // 3. API 호출
-        const apiUrl = nsfwServer.baseUrl + '/api/whitelist/request';
+        const apiUrl = nsfwServer.serverUrl + '/api/whitelist/request';
 
-        console.log('[Kas-Free] 화이트리스트 API 요청:', {
-            imageUrl: actualImageUrl,
-            reason: reason
-        });
+
 
         const apiResponse = await fetch(apiUrl, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                ...nsfwServer._buildHeaders()
             },
             body: JSON.stringify({
                 imageUrl: actualImageUrl,
@@ -1603,7 +1036,6 @@ async function handleWhitelistRequest(imageUrl, pageUrl, tab) {
         }
 
         // 4. 성공 알림
-        console.log('[Kas-Free] 화이트리스트 요청 성공:', result);
 
         chrome.notifications.create({
             type: 'basic',

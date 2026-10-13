@@ -1,3 +1,4 @@
+import { getDcRequestBroker } from '../background/DcRequestBroker.js';
 /**
  * 이미지 해싱 유틸리티
  * @author 최진호
@@ -31,11 +32,7 @@ export async function generateDHashFromBlob(blob) {
  */
 export async function generateDHash(imageUrl) {
     try {
-        const response = await fetch(imageUrl);
-        if (!response.ok) {
-            throw new Error(`이미지 fetch 실패: ${response.status}`);
-        }
-        const blob = await response.blob();
+        const blob = await getDcRequestBroker().request(imageUrl, { kind: 'image' });
         return generateDHashFromBlob(blob);
     } catch (error) {
         console.error('[Kas-Free] dHash 생성 실패:', error);
@@ -103,9 +100,8 @@ function computeDHash(imageBitmap) {
  * @returns {Promise<string>} 16자 hex 해시
  */
 export async function generatePHash(imageUrl) {
-    // pHash는 DCT가 필요하므로 복잡함
-    // 현재는 dHash와 동일하게 처리
-    return generateDHash(imageUrl);
+    // 서버 DCT 전처리와 검증되지 않은 pHash를 보내지 않는다.
+    return null;
 }
 
 /**
@@ -132,11 +128,7 @@ export async function generateAHashFromBlob(blob) {
  */
 export async function generateAHash(imageUrl) {
     try {
-        const response = await fetch(imageUrl);
-        if (!response.ok) {
-            throw new Error(`이미지 fetch 실패: ${response.status}`);
-        }
-        const blob = await response.blob();
+        const blob = await getDcRequestBroker().request(imageUrl, { kind: 'image' });
         return generateAHashFromBlob(blob);
     } catch (error) {
         console.error('[Kas-Free] aHash 생성 실패:', error);
@@ -200,11 +192,11 @@ function computeAHash(imageBitmap) {
  * @returns {Promise<{phash: string|null, dhash: string, ahash: string}>}
  */
 export async function generateAllHashesFromBlob(blob) {
-    const [dhash, ahash] = await Promise.all([
-        generateDHashFromBlob(blob),
-        generateAHashFromBlob(blob)
-    ]);
-    return { phash: null, dhash, ahash };
+    const bitmap = await createImageBitmap(blob);
+    try {
+        if (bitmap.width * bitmap.height > 16_000_000) throw new Error('이미지 픽셀 크기 제한을 초과했습니다.');
+        return { phash: null, dhash: computeDHash(bitmap), ahash: computeAHash(bitmap) };
+    } finally { bitmap.close(); }
 }
 
 /**
@@ -215,21 +207,8 @@ export async function generateAllHashesFromBlob(blob) {
 export async function generateAllHashes(imageUrl) {
     try {
         // 1회 fetch 후 Blob을 두 해시 함수에 공유
-        const response = await fetch(imageUrl);
-        if (!response.ok) {
-            throw new Error(`이미지 fetch 실패: ${response.status}`);
-        }
-        const blob       = await response.blob();
-        const [dhash, ahash] = await Promise.all([
-            generateDHashFromBlob(blob),
-            generateAHashFromBlob(blob)
-        ]);
-
-        return {
-            phash: dhash, // pHash는 dHash와 동일
-            dhash: dhash,
-            ahash: ahash
-        };
+        const blob = await getDcRequestBroker().request(imageUrl, { kind: 'image' });
+        return generateAllHashesFromBlob(blob);
     } catch (error) {
         console.error('[Kas-Free] 해시 생성 실패:', error);
         throw error;

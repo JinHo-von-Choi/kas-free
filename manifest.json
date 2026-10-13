@@ -1,24 +1,21 @@
 {
     "manifest_version": 3,
     "name": "__MSG_extName__",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "description": "__MSG_extDescription__",
     "default_locale": "ko",
     "author": "Jinho Von Choi",
-
     "icons": {
         "16": "icons/icon16.png",
         "48": "icons/icon48.png",
         "128": "icons/icon128.png"
     },
-
     "permissions": [
         "storage",
         "activeTab",
-"contextMenus",
+        "contextMenus",
         "notifications"
     ],
-
     "host_permissions": [
         "https://gall.dcinside.com/*",
         "https://gall.dcinside.co.kr/*",
@@ -26,34 +23,42 @@
         "https://*.dcinside.co.kr/*",
         "https://nsfw.nerdvana.kr/*"
     ],
-
     "background": {
         "service_worker": "src/background/service-worker.js",
         "type": "module"
     },
-
     "content_scripts": [
         {
             "matches": [
                 "https://gall.dcinside.com/*",
                 "https://gall.dcinside.co.kr/*"
             ],
+            "js": [
+                "src/content/earlyProtection.js"
+            ],
             "css": [
                 "src/content/content.css"
             ],
+            "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "https://gall.dcinside.com/*",
+                "https://gall.dcinside.co.kr/*"
+            ],
             "js": [
+                "src/utils/decision.global.js",
+                "src/utils/messageClient.global.js",
                 "src/utils/db.js",
                 "src/utils/apiRequestManager.global.js",
                 "src/utils/lazyImageAnalyzer.global.js",
                 "src/utils/adaptiveBatchManager.global.js",
-                "src/utils/fetchQueueManager.global.js",
                 "src/content/dcParser.js",
                 "src/content/content.js"
             ],
             "run_at": "document_idle"
         }
     ],
-
     "action": {
         "default_popup": "src/popup/popup.html",
         "default_icon": {
@@ -63,25 +68,21 @@
         },
         "default_title": "__MSG_extName__"
     },
-
     "options_ui": {
         "page": "src/options/options.html",
         "open_in_tab": true
     },
-
     "web_accessible_resources": [
         {
             "resources": [
-                "models/nsfwjs/*",
                 "icons/signals/*",
-                "src/lib/*",
-"src/workers/*",
-                "placeholder.jpg"
+                "icons/placeholder.svg"
             ],
             "matches": [
                 "https://*.dcinside.com/*",
                 "https://*.dcinside.co.kr/*"
             ]
         }
-    ]
+    ],
+    "minimum_chrome_version": "116"
 }

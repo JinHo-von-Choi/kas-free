@@ -215,31 +215,32 @@ class DcParser {
      * @param {string} postUrl - 게시글 URL
      * @returns {Promise<string|null>}
      */
+    async fetchPostHtml(postUrl) {
+        const response = await chrome.runtime.sendMessage({ type: 'FETCH_DC_POST', postUrl });
+        if (!response || response.error) {
+            const error = new Error(response?.error || '게시글 조회 응답이 없습니다.');
+            error.code = response?.code;
+            error.retryAt = response?.retryAt;
+            throw error;
+        }
+        if (typeof response.html !== 'string') throw new Error('게시글 응답이 올바르지 않습니다.');
+        return response.html;
+    }
+
     async fetchOgImage(postUrl) {
         const fetchOpts = { credentials: 'include', referrerPolicy: 'no-referrer' };
         const postNo    = postUrl.match(/no=(\d+)/)?.[1] || 'unknown';
 
         try {
             /** FetchQueueManager를 통해 요청 (차단 방지). 미로드 시 직접 fetch */
-            const html = await (window.fetchQueueManager
-                ? window.fetchQueueManager.enqueue(
-                    async () => {
-                        const r = await fetch(postUrl, fetchOpts);
-                        return r.ok ? r.text() : null;
-                    },
-                    { postNo }
-                  )
-                : (async () => {
-                    const r = await fetch(postUrl, fetchOpts);
-                    return r.ok ? r.text() : null;
-                  })());
+            const html = await this.fetchPostHtml(postUrl);
 
             if (!html) {
                 return null;
             }
 
             const parser = new DOMParser();
-            const doc    = parser.parseFromString(html, 'text/html');
+            const doc    = parser.parseFromString(html.replace(/\b(src|srcset)\s*=/gi, 'data-kas-$1='), 'text/html');
 
             /** OG 이미지 추출 */
             const ogImage = doc.querySelector(DC_SELECTORS.OG_IMAGE);
@@ -249,14 +250,13 @@ class DcParser {
 
             /** 본문 첫 이미지 추출 */
             const firstImage = doc.querySelector(DC_SELECTORS.CONTENT_IMAGE);
-            if (firstImage && DC_URL_PATTERNS.VIEW_IMAGE.test(firstImage.src)) {
-                return firstImage.src;
+            if (firstImage && DC_URL_PATTERNS.VIEW_IMAGE.test(firstImage.getAttribute('data-kas-src') || '')) {
+                return firstImage.getAttribute('data-kas-src');
             }
 
             return null;
         } catch (error) {
-            console.error('[Kas-Free] fetchOgImage error:', error);
-            return null;
+            throw error;
         }
     }
 
@@ -271,24 +271,13 @@ class DcParser {
 
         try {
             /** FetchQueueManager를 통해 요청 (차단 방지). 미로드 시 직접 fetch */
-            const html = await (window.fetchQueueManager
-                ? window.fetchQueueManager.enqueue(
-                    async () => {
-                        const r = await fetch(postUrl, fetchOpts);
-                        return r.ok ? r.text() : null;
-                    },
-                    { postNo }
-                  )
-                : (async () => {
-                    const r = await fetch(postUrl, fetchOpts);
-                    return r.ok ? r.text() : null;
-                  })());
+            const html = await this.fetchPostHtml(postUrl);
 
             if (!html) {
                 return null;
             }
             const parser = new DOMParser();
-            const doc    = parser.parseFromString(html, 'text/html');
+            const doc    = parser.parseFromString(html.replace(/\b(src|srcset)\s*=/gi, 'data-kas-$1='), 'text/html');
 
             /** 본문 텍스트 추출 */
             const writeDiv = doc.querySelector(DC_SELECTORS.WRITE_DIV);

@@ -276,7 +276,50 @@
      * 설정을 UI에 적용한다
      * @param {object} settings - 설정 객체
      */
+    let protectionSettings = {};
+    const profileNames = { gore: '고어', violence: '폭력', death: '죽음', disturbing: '혐오', insects: '벌레', medical: '의료', shock: '충격', animal_cruelty: '동물학대', nsfw_porn: '음란물', nsfw_sexy: '선정성' };
+    function applyProtectionSettings(settings) {
+        protectionSettings = settings;
+        for (const [id, fallback] of [['protectPending', true], ['prefetchEnabled', false], ['allowServerAnalysis', false]]) {
+            document.getElementById(id).checked = settings[id] ?? fallback;
+        }
+        const group = document.getElementById('profileCategories');
+        group.replaceChildren();
+        for (const [name, labelText] of Object.entries(profileNames)) {
+            const label = document.createElement('label');
+            const input = document.createElement('input');
+            input.type = 'checkbox'; input.dataset.category = name;
+            input.checked = settings.profile?.categories?.[name]?.enabled !== false;
+            label.append(input, document.createTextNode(labelText + ' ')); group.append(label);
+        }
+        document.getElementById('domainExceptions').value = (settings.profile?.domainExceptions || []).join('\n');
+        refreshDcStatus();
+    }
+    function collectProtectionSettings() {
+        const categories = { ...(protectionSettings.profile?.categories || {}) };
+        for (const input of document.querySelectorAll('#profileCategories input')) categories[input.dataset.category] = { ...categories[input.dataset.category], enabled: input.checked };
+        const profile = { version: 1, categories, domainExceptions: document.getElementById('domainExceptions').value.split('\n').map(x => x.trim()).filter(Boolean) };
+        const minutes = document.getElementById('bypassMinutes').value;
+        if (minutes === 'keep' && protectionSettings.profile?.bypassUntil) profile.bypassUntil = protectionSettings.profile.bypassUntil;
+        else if (Number(minutes) > 0) profile.bypassUntil = new Date(Date.now() + Number(minutes) * 60000).toISOString();
+        return { profile, protectPending: document.getElementById('protectPending').checked,
+            prefetchEnabled: document.getElementById('prefetchEnabled').checked,
+            allowServerAnalysis: document.getElementById('allowServerAnalysis').checked };
+    }
+    async function refreshDcStatus() {
+        const target = document.getElementById('dcRequestStatus');
+        try {
+            const status = await sendMessage({ type: 'GET_DC_REQUEST_STATUS' });
+            target.textContent = status.stopped ? '접근 제한으로 자동 수집 중단' : status.retryAt > Date.now() ? '다음 조회 가능: ' + new Date(status.retryAt).toLocaleTimeString() : '수집 가능';
+            target.textContent += ` · 시작 ${status.started} · 대기 ${status.queued}`;
+        } catch { target.textContent = '수집 상태를 확인할 수 없습니다.'; }
+    }
+    document.getElementById('resumeDcRequests').addEventListener('click', async () => {
+        try { await sendMessage({ type: 'RESUME_DC_REQUESTS' }); await refreshDcStatus(); }
+        catch (error) { document.getElementById('dcRequestStatus').textContent = error.message; }
+    });
     function applySettingsToUI(settings) {
+        applyProtectionSettings(settings);
         /** API 설정 */
         elements.geminiFlashEnabled.checked  = settings.apis.geminiFlash?.enabled || false;
         elements.geminiFlashApiKey.value     = settings.apis.geminiFlash?.apiKey || '';
@@ -290,16 +333,16 @@
 
         /** 민감도 설정 */
         const sensitivity = settings.sensitivity;
-        setSliderValue('gore', Math.round((sensitivity.gore || 0.8) * 100));
-        setSliderValue('violence', Math.round((sensitivity.violence || 0.8) * 100));
-        setSliderValue('death', Math.round((sensitivity.death || 0.8) * 100));
-        setSliderValue('disturbing', Math.round((sensitivity.disturbing || 0.8) * 100));
-        setSliderValue('insects', Math.round((sensitivity.insects || 0.7) * 100));
-        setSliderValue('medical', Math.round((sensitivity.medical || 0.7) * 100));
-        setSliderValue('shock', Math.round((sensitivity.shock || 0.7) * 100));
-        setSliderValue('animalCruelty', Math.round((sensitivity.animal_cruelty || 0.8) * 100));
-        setSliderValue('nsfwPorn', Math.round((sensitivity.nsfw_porn || 0.3) * 100));
-        setSliderValue('nsfwSexy', Math.round((sensitivity.nsfw_sexy || 0.2) * 100));
+        setSliderValue('gore', Math.round((sensitivity.gore ?? 0.8) * 100));
+        setSliderValue('violence', Math.round((sensitivity.violence ?? 0.8) * 100));
+        setSliderValue('death', Math.round((sensitivity.death ?? 0.8) * 100));
+        setSliderValue('disturbing', Math.round((sensitivity.disturbing ?? 0.8) * 100));
+        setSliderValue('insects', Math.round((sensitivity.insects ?? 0.7) * 100));
+        setSliderValue('medical', Math.round((sensitivity.medical ?? 0.7) * 100));
+        setSliderValue('shock', Math.round((sensitivity.shock ?? 0.7) * 100));
+        setSliderValue('animalCruelty', Math.round((sensitivity.animal_cruelty ?? 0.8) * 100));
+        setSliderValue('nsfwPorn', Math.round((sensitivity.nsfw_porn ?? 0.3) * 100));
+        setSliderValue('nsfwSexy', Math.round((sensitivity.nsfw_sexy ?? 0.2) * 100));
 
         /** 임계값 설정 */
         elements.safeMaxThreshold.value    = settings.thresholds.safeMax;
@@ -392,6 +435,7 @@
      */
     function collectSettingsFromUI() {
         return {
+            ...collectProtectionSettings(),
             // ========================================
             // 동작 설정 (체크박스)
             // ========================================
@@ -493,12 +537,12 @@
 
         /** 저장 버튼 */
         elements.btnSave.addEventListener('click', async () => {
-            const settings = collectSettingsFromUI();
-            await sendMessage({
-                type:     'UPDATE_SETTINGS',
-                settings: settings
-            });
-            showToast('설정이 저장되었습니다.');
+            try {
+                const settings = collectSettingsFromUI();
+                const response = await sendMessage({ type: 'UPDATE_SETTINGS', settings });
+                if (!response?.success) throw new Error(response?.error || '설정을 저장하지 못했습니다.');
+                showToast('설정이 저장되었습니다.');
+            } catch (error) { showToast(error.message || '설정을 저장하지 못했습니다.'); }
         });
 
         /** 기본값 복원 버튼 */

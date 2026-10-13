@@ -88,6 +88,8 @@
         DANGER:    'danger',      // 위험 (riskScore ≥ 0.6)
         UNCHECKED: 'unchecked',   // 미검사 (이미지 없음 or 자동검사 꺼짐)
         LOADING:   'loading',     // 검사 중 (API 요청 중)
+        DEFERRED:  'deferred',
+        CANCELLED: 'cancelled',
         ERROR:     'error'        // 검사 실패 (API 에러, 타임아웃 등)
     };
 
@@ -112,6 +114,8 @@
         [SIGNAL_STATUS.DANGER]:    '위험',
         [SIGNAL_STATUS.UNCHECKED]: '미검사',
         [SIGNAL_STATUS.LOADING]:   '검사 중...',
+        [SIGNAL_STATUS.DEFERRED]:  '수집 대기',
+        [SIGNAL_STATUS.CANCELLED]: '조회 취소',
         [SIGNAL_STATUS.ERROR]:     '검사 실패'
     };
 
@@ -371,65 +375,23 @@
      * @returns {Promise<object|null>} 분석 결과 또는 null
      */
     async function getAnalysisFromCache(postNo) {
-        // ========================================
-        // 1단계: 메모리 캐시 확인 (최우선)
-        // ========================================
-        // Map.has(): O(1) 시간 복잡도 (해시맵)
-        if (analyzedPosts.has(postNo)) {
-            // 즉시 반환 (0.1ms 미만)
-            return analyzedPosts.get(postNo);
-        }
-
-        // ========================================
-        // 2단계: cacheEnabled 확인
-        // ========================================
-        // 사용자가 캐시를 껐으면 IndexedDB 사용 안 함
-        if (!currentSettings || !currentSettings.cacheEnabled) {
-            return null;  // 캐시 없음, 새로 분석 필요
-        }
-
-        // ========================================
-        // 3단계: IndexedDB 확인
-        // ========================================
-        // window.kasFreeDB: db.js에서 전역으로 등록한 IndexedDB 인스턴스
-        if (!window.kasFreeDB) {
-            console.warn('[Kas-Free] IndexedDB가 아직 초기화되지 않음');
+        const key = window.KasDecision.cacheKey(postNo, window.location.href, currentSettings);
+        const result = analyzedPosts.get(key);
+        if (!result || result.decisionVersion !== 2 || Date.now() - result.timestamp > 60000) {
+            analyzedPosts.delete(key);
             return null;
         }
-
-        try {
-            // ========================================
-            // IndexedDB에서 분석 결과 조회 (비동기)
-            // ========================================
-            // getAnalysisResult(): db.js의 메서드
-            // 약 10ms 소요 (비동기 I/O)
-            const result = await window.kasFreeDB.getAnalysisResult(postNo);
-
-            if (result) {
-                // ========================================
-                // Cache Warming (메모리 캐시에 저장)
-                // ========================================
-                // IndexedDB에서 읽은 데이터를 메모리에도 저장
-                // 다음에 같은 게시글 접근 시 메모리에서 즉시 반환 (0.1ms)
-                analyzedPosts.set(postNo, result);
-
-                return result;  // IndexedDB 히트 성공
+        if (result.decisionRevision) {
+            const metadata = await chrome.runtime.sendMessage({ type: 'GET_DECISION_REVISION' }).catch(() => null);
+            if (!metadata?.decisionRevision || metadata.decisionRevision !== result.decisionRevision) {
+                analyzedPosts.delete(key);
+                return null;
             }
-        } catch (error) {
-            // ========================================
-            // IndexedDB 읽기 실패 (에러 처리)
-            // ========================================
-            // 가능한 에러:
-            // - QuotaExceededError: 용량 초과
-            // - InvalidStateError: DB가 닫힘
-            // - UnknownError: 알 수 없는 에러
-            console.error('[Kas-Free] IndexedDB 읽기 실패:', error);
+        } else if (!['unchecked', 'deferred'].includes(result.status)) {
+            analyzedPosts.delete(key);
+            return null;
         }
-
-        // ========================================
-        // 캐시 미스 (메모리, IndexedDB 모두 없음)
-        // ========================================
-        return null;  // 새로 분석 요청 필요
+        return { ...result };
     }
 
     /**
@@ -463,52 +425,10 @@
      * @returns {Promise<void>}
      */
     async function setAnalysisToCache(postNo, data) {
-        // ========================================
-        // 1단계: 메모리 캐시 저장 (최우선, 항상 실행)
-        // ========================================
-        // Map.set(): O(1) 시간 복잡도
-        // 즉시 저장되어 다음 getAnalysisFromCache() 호출 시 0.1ms만에 반환
-        analyzedPosts.set(postNo, data);
-
-        // ========================================
-        // 2단계: cacheEnabled 확인
-        // ========================================
-        // 사용자가 캐시를 껐으면 IndexedDB 저장 안 함
-        // 메모리 캐시는 이미 저장되었으므로 현재 페이지에서는 동작함
-        if (!currentSettings || !currentSettings.cacheEnabled) {
-            return;  // 메모리 캐시만 사용, IndexedDB는 스킵
-        }
-
-        // ========================================
-        // 3단계: IndexedDB 저장 (비동기, 실패해도 무시)
-        // ========================================
-        if (!window.kasFreeDB) {
-            console.warn('[Kas-Free] IndexedDB가 아직 초기화되지 않음');
-            return;  // IndexedDB 없어도 메모리 캐시는 동작
-        }
-
-        try {
-            // ========================================
-            // IndexedDB에 비동기 저장 (약 10ms)
-            // ========================================
-            // setAnalysisResult(): db.js의 메서드
-            // 성공 시: 다음 페이지 로드에서도 캐시 사용 가능
-            // 실패 시: 메모리 캐시만 사용, 페이지 새로고침 시 재분석
-            await window.kasFreeDB.setAnalysisResult(postNo, data);
-        } catch (error) {
-            // ========================================
-            // IndexedDB 쓰기 실패 (에러 무시)
-            // ========================================
-            // 가능한 에러:
-            // - QuotaExceededError: 용량 초과 (가장 흔함)
-            //   → 오래된 캐시 삭제 필요 (trimToLimit(), deleteOldRecords())
-            // - InvalidStateError: DB가 닫힘
-            // - UnknownError: 알 수 없는 에러
-            //
-            // 메모리 캐시는 이미 저장되었으므로 현재 페이지에서는 정상 동작
-            console.error('[Kas-Free] IndexedDB 쓰기 실패:', error);
-        }
-        // 에러가 발생해도 함수는 정상 종료 (메모리 캐시는 유지)
+        if (!data || ['error', 'deferred', 'cancelled'].includes(data.status)) return;
+        const key = window.KasDecision.cacheKey(postNo, window.location.href, currentSettings);
+        analyzedPosts.set(key, { ...data, decisionVersion: 2, timestamp: Date.now() });
+        if (analyzedPosts.size > 200) analyzedPosts.delete(analyzedPosts.keys().next().value);
     }
 
     /**
@@ -540,33 +460,9 @@
      * @returns {Promise<object|null>} 본문 데이터 또는 null
      */
     async function getContentFromCache(postNo) {
-        // 1순위: 메모리 캐시 (즉시 반환)
-        if (postContentCache.has(postNo)) {
-            return postContentCache.get(postNo);
-        }
-
-        // cacheEnabled가 false면 IndexedDB 사용 안 함
-        if (!currentSettings || !currentSettings.cacheEnabled) {
-            return null;
-        }
-
-        // 2순위: IndexedDB (비동기 조회)
-        if (!window.kasFreeDB) {
-            return null;
-        }
-
-        try {
-            const result = await window.kasFreeDB.getPostContent(postNo);
-            if (result) {
-                // Cache Warming: 메모리 캐시에도 저장 (다음 접근 시 빠름)
-                postContentCache.set(postNo, result);
-                return result;
-            }
-        } catch (error) {
-            console.error('[Kas-Free] IndexedDB 읽기 실패:', error);
-        }
-
-        return null;  // 캐시 미스, fetch 필요
+        const key = window.KasDecision.cacheKey(postNo, window.location.href, currentSettings);
+        const result = postContentCache.get(key);
+        return result && Date.now() - result.timestamp < 60000 ? result.data : null;
     }
 
     /**
@@ -587,24 +483,9 @@
      * @returns {Promise<void>}
      */
     async function setContentToCache(postNo, data) {
-        // 메모리 캐시 저장 (즉시)
-        postContentCache.set(postNo, data);
-
-        // cacheEnabled가 false면 IndexedDB 저장 안 함
-        if (!currentSettings || !currentSettings.cacheEnabled) {
-            return;
-        }
-
-        // IndexedDB 저장 (실패해도 메모리 캐시는 유지)
-        if (!window.kasFreeDB) {
-            return;
-        }
-
-        try {
-            await window.kasFreeDB.setPostContent(postNo, data);
-        } catch (error) {
-            console.error('[Kas-Free] IndexedDB 쓰기 실패:', error);
-        }
+        const key = window.KasDecision.cacheKey(postNo, window.location.href, currentSettings);
+        postContentCache.set(key, { data, timestamp: Date.now() });
+        if (postContentCache.size > 50) postContentCache.delete(postContentCache.keys().next().value);
     }
 
     /**
@@ -961,7 +842,7 @@
                 },
                 onHidden: (element, postInfo) => {
                 },
-                rootMargin: isViewPage ? 10000 : 200,
+                rootMargin: 0,
                 threshold: 0.1
             });
 
@@ -989,7 +870,8 @@
         // ========================================
         // 9단계: 초기화 완료
         // ========================================
-        isInitialized = true;  // 중복 실행 방지 플래그 설정
+        isInitialized = true;
+        refreshDecisionRevision();
         debugLog('Content script 초기화 완료');
 
         // ========================================
@@ -1299,71 +1181,160 @@
      * 게시글 상세 페이지의 본문 이미지를 처리한다
      * caution/danger인 경우 너굴맨 이미지로 대체
      */
-    async function processViewPageImages() {
-        const postUrl = window.location.href;
-        const postNo  = getPostNoFromUrl(postUrl);
-
-        if (!postNo) {
-            debugLog('게시글 번호를 찾을 수 없음');
-            return;
-        }
-
-        /** 모든 이미지 무조건 대체 */
-        if (currentSettings.replaceAllImages) {
-            const images = document.querySelectorAll('.writing_view_box img[data-fileno]');
-            if (images.length > 0) {
-                replaceViewPageImages(SIGNAL_STATUS.DANGER);
-                debugLog('모든 이미지 대체 완료');
-                return;
-            }
-            /** 이미지가 아직 DOM에 없으면 MutationObserver로 대기 후 재시도 (최대 10초) */
-            debugLog('이미지 미로드 — MutationObserver 대기 시작');
-            const observer = new MutationObserver(() => {
-                const delayed = document.querySelectorAll('.writing_view_box img[data-fileno]');
-                if (delayed.length > 0) {
-                    observer.disconnect();
-                    replaceViewPageImages(SIGNAL_STATUS.DANGER);
-                    debugLog('모든 이미지 대체 완료 (지연 로드)');
+    let viewAnalysisRunning = false;
+    let viewImagesChanged = false;
+    let observedRevision;
+    let revisionRefreshRunning = false;
+    async function refreshDecisionRevision() {
+        if (document.hidden || !currentSettings?.enabled || revisionRefreshRunning) return;
+        revisionRefreshRunning = true;
+        try {
+            const metadata = await chrome.runtime.sendMessage({ type: 'GET_DECISION_REVISION' });
+            const revision = metadata?.decisionRevision || null;
+            if (!revision && observedRevision) {
+                settingsGeneration++;
+                await chrome.runtime.sendMessage({ type: 'CANCEL_DC_REQUESTS' });
+                analyzedPosts.clear();
+                for (const img of document.querySelectorAll('.writing_view_box img')) {
+                    img.dataset.kasChecked = 'false';
+                    if (img.dataset.kasStatus === 'safe') img.dataset.kasStatus = 'unchecked';
+                    delete img.dataset.kasCheckedSrc;
+                    delete img.dataset.kasRevealed;
                 }
+                for (const signal of document.querySelectorAll('.kas-signal')) updateSignalStatus(signal, SIGNAL_STATUS.UNCHECKED);
+            }
+            if (!revision) {
+                for (const img of document.querySelectorAll('.writing_view_box img[data-kas-status="safe"]')) {
+                    if (Date.now() - Number(img.dataset.kasCheckedAt || 0) < 60000) continue;
+                    img.dataset.kasStatus = 'unchecked';
+                    img.dataset.kasChecked = 'false';
+                    delete img.dataset.kasCheckedSrc;
+                    delete img.dataset.kasRevealed;
+                    const label = document.querySelector('.kas-protection-notice span');
+                    if (label) label.textContent = '서버 판정 버전을 확인할 수 없어 정상 판정이 만료됐습니다. 직접 다시 검사할 수 있습니다.';
+                }
+                for (const signal of document.querySelectorAll('.kas-signal[data-status="safe"]')) {
+                    if (Date.now() - Number(signal.dataset.kasCheckedAt || 0) >= 60000) updateSignalStatus(signal, SIGNAL_STATUS.UNCHECKED);
+                }
+            }
+            if (revision && observedRevision !== undefined && revision !== observedRevision) {
+                settingsGeneration++;
+                await chrome.runtime.sendMessage({ type: 'CANCEL_DC_REQUESTS' });
+                analyzedPosts.clear();
+                for (const img of document.querySelectorAll('.writing_view_box img')) {
+                    delete img.dataset.kasCheckedSrc;
+                    delete img.dataset.kasChecked;
+                }
+                for (const signal of document.querySelectorAll('.kas-signal')) updateSignalStatus(signal, SIGNAL_STATUS.UNCHECKED);
+                if (window.dcParser?.isGalleryViewPage()) { viewImagesChanged = true; processViewPageImages(); }
+                else if (window.dcParser?.isGalleryListPage()) {
+                    for (const row of window.dcParser.getAllPostRows()) {
+                        const rect = row.getBoundingClientRect();
+                        if (rect.bottom > 0 && rect.top < window.innerHeight) await processPostRow(row);
+                    }
+                }
+            }
+            observedRevision = revision;
+        } catch {
+            analyzedPosts.clear();
+        } finally { revisionRefreshRunning = false; }
+    }
+    const revisionTimer = setInterval(refreshDecisionRevision, 10000);
+    activeTimers.add(revisionTimer);
+    const bodyImageObserver = new MutationObserver(mutations => {
+        let changed = false;
+        for (const mutation of mutations) {
+            if (mutation.type === 'attributes' && mutation.target.matches('.writing_view_box img')) {
+                delete mutation.target.dataset.kasCheckedSrc;
+                delete mutation.target.dataset.kasChecked;
+                delete mutation.target.dataset.kasRevealed;
+                changed = true;
+            }
+            if (mutation.type === 'childList' && Array.from(mutation.addedNodes).some(node => node.nodeType === 1
+                && (node.matches('.writing_view_box img') || node.querySelector('.writing_view_box img')
+                    || (node.matches('img') && node.closest('.writing_view_box'))))) changed = true;
+        }
+        if (changed && window.dcParser?.isGalleryViewPage()) {
+            viewImagesChanged = true;
+            processViewPageImages();
+        }
+    });
+    if (document.body) bodyImageObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] });
+    for (const event of ['pagehide', 'visibilitychange']) window.addEventListener(event, () => {
+        if (event === 'pagehide' || document.hidden) chrome.runtime.sendMessage({ type: 'CANCEL_DC_REQUESTS' }).catch(() => {});
+        else { refreshDecisionRevision(); if (window.dcParser?.isGalleryViewPage()) processViewPageImages(); }
+    });
+    const bodyImageSource = img => img.currentSrc || img.src;
+    let bodyManualRetry = false;
+    document.addEventListener('load', event => {
+        const img = event.target;
+        if (!img.matches?.('.writing_view_box img') || img.dataset.kasCheckedSrc === bodyImageSource(img)) return;
+        delete img.dataset.kasCheckedSrc;
+        delete img.dataset.kasChecked;
+        delete img.dataset.kasRevealed;
+        viewImagesChanged = true;
+        processViewPageImages();
+    }, true);
+    async function processViewPageImages(manual = false) {
+        if (manual) bodyManualRetry = true;
+        if (!currentSettings?.enabled || document.hidden || viewAnalysisRunning) return;
+        const images = Array.from(document.querySelectorAll('.writing_view_box img'))
+            .filter(img => !img.classList.contains('written_dccon') && !img.closest('#zzbang_div'));
+        let notice = document.querySelector('.kas-protection-notice');
+        if (!notice && images.length) {
+            notice = document.createElement('div');
+            notice.className = 'kas-protection-notice';
+            notice.setAttribute('role', 'status');
+            const label = document.createElement('span');
+            const reveal = document.createElement('button');
+            reveal.type = 'button'; reveal.textContent = '이 페이지 이미지 직접 공개';
+            reveal.addEventListener('click', () => {
+                for (const img of document.querySelectorAll('.writing_view_box img:not(.written_dccon)')) img.dataset.kasRevealed = 'true';
+                label.textContent = '사용자가 직접 공개했습니다. 정상 판정과는 다릅니다.';
             });
-            observer.observe(document.body, { childList: true, subtree: true });
-            setTimeout(() => observer.disconnect(), 10000);
-            return;
-        }
-
-        /** 분석 결과 가져오기 (캐시 우선) */
-        let result = await getAnalysisFromCache(postNo);
-
-        if (!result && currentSettings.autoScan) {
-            /** 캐시에 없으면 새로 분석 요청 */
-            try {
-                result = await requestImageAnalysis({ postNo, postUrl });
-
-                if (result) {
-                    await setAnalysisToCache(postNo, result);
+            const retry = document.createElement('button');
+            retry.type = 'button'; retry.textContent = '미확인 이미지 다시 검사';
+            retry.addEventListener('click', () => {
+                for (const img of document.querySelectorAll('.writing_view_box img')) {
+                    if (['error', 'deferred', 'cancelled', 'unchecked'].includes(img.dataset.kasStatus)) delete img.dataset.kasCheckedSrc;
                 }
-            } catch (error) {
-                console.error('[Kas-Free] 게시글 이미지 분석 실패:', error);
-                return;
+                processViewPageImages(true);
+            });
+            notice.append(label, reveal, retry);
+            document.querySelector('.writing_view_box').before(notice);
+        }
+        if (!images.length) return;
+        const candidates = images.filter(img => img.dataset.kasCheckedSrc !== bodyImageSource(img));
+        if (!candidates.length) return;
+        for (const img of candidates) { img.dataset.kasChecked = 'false'; }
+        if (notice) notice.querySelector('span').textContent = currentSettings.autoScan ? '이미지 검사 중입니다. 수집 제한·미확인은 계속 가립니다.' : '자동 검사가 꺼져 있습니다. 직접 공개할 수 있습니다.';
+        if ((!currentSettings.autoScan && !bodyManualRetry) || currentSettings.replaceAllImages) return;
+        const userInitiated = bodyManualRetry;
+        bodyManualRetry = false;
+        viewAnalysisRunning = true;
+        viewImagesChanged = false;
+        try {
+            const urls = candidates.map(bodyImageSource).filter(url => /^https:\/\/(?:[a-z0-9-]+\.)*dcinside\.(?:com|co\.kr)\//i.test(url));
+            const response = await sendMessageWithTimeout({ type: 'ANALYZE_IMAGES', postUrl: window.location.href, imageUrls: urls.slice(0, 100), userInitiated }, 91000);
+            for (const result of response.results || []) {
+                const decision = window.KasDecision.displayDecision(result, currentSettings);
+                for (const img of candidates.filter(img => bodyImageSource(img) === result.imageUrl)) {
+                    img.dataset.kasCheckedSrc = bodyImageSource(img);
+                    img.dataset.kasStatus = decision.status;
+                    img.dataset.kasCheckedAt = String(Date.now());
+                    img.dataset.kasChecked = String(decision.status === 'safe');
+                    img.classList.toggle('kas-blocked-image', ['danger', 'caution'].includes(decision.status));
+                }
             }
-        }
-
-        /** 결과가 없으면 대체 불필요 */
-        if (!result) {
-            debugLog('이미지 대체 불필요: 결과 없음');
-            return;
-        }
-
-        /** 사용자 민감도 적용 (result.status는 SW 판정값으로 sensitivity 미반영 — 직접 재계산) */
-        const adjustedRiskScore = applyUserSensitivity(result, currentSettings.sensitivity);
-        const status = determineSignalStatus(adjustedRiskScore);
-
-        /** caution 또는 danger인 경우에만 이미지 대체 */
-        if (status === SIGNAL_STATUS.CAUTION || status === SIGNAL_STATUS.DANGER) {
-            replaceViewPageImages(status);
-            debugLog('이미지 대체 완료:', status);
-        } else {
-            debugLog('이미지 대체 불필요:', status);
+            if (notice) {
+                const safeCount = images.filter(img => img.dataset.kasChecked === 'true').length;
+                notice.querySelector('span').textContent = `${safeCount}/${images.length}개 공개 가능. 위험·미확인·수집 대기 이미지는 가립니다.`;
+            }
+        } catch (error) {
+            if (notice) notice.querySelector('span').textContent = error.message;
+        } finally {
+            viewAnalysisRunning = false;
+            if (viewImagesChanged) processViewPageImages();
         }
     }
 
@@ -1404,7 +1375,7 @@
             return;
         }
 
-        const placeholderUrl = chrome.runtime.getURL('placeholder.jpg');
+        const placeholderUrl = chrome.runtime.getURL('icons/placeholder.svg');
 
         images.forEach(img => {
             /** 디시콘 제외 */
@@ -1488,7 +1459,7 @@
         }
 
         /** 캐시된 결과만 확인 */
-        const cachedResult = analyzedPosts.get(postInfo.postNo);
+        const cachedResult = analyzedPosts.get(window.KasDecision.cacheKey(postInfo.postNo, window.location.href, currentSettings));
         if (cachedResult) {
             handleAnalysisResult(signal, row, cachedResult, postInfo, { skipStats: true });
         }
@@ -1499,7 +1470,7 @@
      * 개별 게시글 Row를 처리한다
      * @param {Element} row - 게시글 Row 엘리먼트
      */
-    async function processPostRow(row) {
+    async function processPostRow(row, manual = false) {
         const postInfo = window.dcParser.parsePostRow(row);
         if (!postInfo) {
             return;
@@ -1541,7 +1512,7 @@
         }
 
         /** 캐시된 결과 확인 (DOM 재렌더링 복원용) */
-        const cachedResult = await getAnalysisFromCache(postInfo.postNo);
+        const cachedResult = manual ? null : await getAnalysisFromCache(postInfo.postNo);
         if (cachedResult) {
             handleAnalysisResult(signal, row, cachedResult, postInfo, { skipStats: true });
             return;
@@ -1553,7 +1524,7 @@
         }
 
         /** 자동 검사가 꺼져있으면 미검사 상태 유지 */
-        if (!currentSettings.autoScan) {
+        if (!currentSettings.autoScan && !manual) {
             return;
         }
 
@@ -1561,32 +1532,14 @@
         updateSignalStatus(signal, SIGNAL_STATUS.LOADING);
 
         try {
-            const result = await requestImageAnalysis(postInfo);
+            const result = await requestImageAnalysis({ ...postInfo, userInitiated: manual });
 
             /** 결과 캐시에 저장 (하이브리드: 메모리 + IndexedDB) */
             await setAnalysisToCache(postInfo.postNo, result);
 
             handleAnalysisResult(signal, row, result, postInfo);
         } catch (error) {
-            if (error.message && error.message.includes('타임아웃')) {
-                /**
-                 * FetchQueueManager 큐 대기로 인한 타임아웃 처리
-                 *
-                 * 발생 원인:
-                 * - 10개 이상 동시 요청 → FetchQueueManager 큐 누적
-                 * - 큐 대기 + fetch 시간이 30s 초과
-                 *
-                 * 처리 전략:
-                 * - LOADING 상태 유지 (ERROR 표시 안 함)
-                 * - SW는 백그라운드에서 계속 처리 중
-                 * - 15s 후 재시도 → SW Cache Storage 히트로 즉시 반환
-                 */
-                console.warn('[Kas-Free] 분석 타임아웃 — 백그라운드 처리 대기 후 재시도:', postInfo.postNo);
-                setTimeout(() => processPostRow(row), 15000);
-            } else {
-                console.error('[Kas-Free] Analysis error:', error);
-                updateSignalStatus(signal, SIGNAL_STATUS.ERROR, { error: error.message });
-            }
+            updateSignalStatus(signal, SIGNAL_STATUS.ERROR, { error: error.message });
         }
     }
 
@@ -1605,6 +1558,17 @@
         signal.className    = 'kas-signal kas-signal--unchecked';
         signal.dataset.postNo = postNo;
         signal.title        = SIGNAL_LABELS[SIGNAL_STATUS.UNCHECKED];
+        signal.setAttribute('role', 'button');
+        signal.tabIndex = 0;
+        const retry = event => {
+            if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return;
+            if (!['unchecked', 'error', 'deferred', 'cancelled'].includes(signal.dataset.status || 'unchecked')) return;
+            event.preventDefault(); event.stopPropagation();
+            updateSignalStatus(signal, SIGNAL_STATUS.UNCHECKED);
+            processPostRow(signal.closest('tr'), true);
+        };
+        signal.addEventListener('click', retry);
+        signal.addEventListener('keydown', retry);
 
         /** 툴팁 이벤트 */
         signal.addEventListener('mouseenter', showTooltip);
@@ -1671,6 +1635,7 @@
         /** 제목 및 데이터 업데이트 */
         signal.title             = SIGNAL_LABELS[status] || status;
         signal.dataset.status    = status;
+        signal.dataset.kasCheckedAt = String(Date.now());
         signal.dataset.result    = JSON.stringify(data);
 
         /** AI 체크 버튼 표시 여부 결정 */
@@ -1705,32 +1670,9 @@
      * @param {number} timeout - 타임아웃 (ms), 기본값 15초
      * @returns {Promise<object>}
      */
-    function sendMessageWithTimeout(message, timeout = 15000) {
-        return Promise.race([
-            // 1. 실제 메시지 전송
-            new Promise((resolve, reject) => {
-                chrome.runtime.sendMessage(message, (response) => {
-                    // chrome.runtime.lastError 체크 (필수!)
-                    if (chrome.runtime.lastError) {
-                        reject(new Error(chrome.runtime.lastError.message));
-                        return;
-                    }
-
-                    // 응답에 error 필드가 있으면 reject
-                    if (response && response.error) {
-                        reject(new Error(response.error));
-                        return;
-                    }
-
-                    resolve(response);
-                });
-            }),
-
-            // 2. 타임아웃
-            new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('메시지 타임아웃')), timeout)
-            )
-        ]);
+    let settingsGeneration = 0;
+    function sendMessageWithTimeout(message, timeout = 30000) {
+        return globalThis.KasMessageClient.send(message, { timeout, generation: () => settingsGeneration });
     }
 
     /**
@@ -1739,49 +1681,9 @@
      * @returns {Promise<object>}
      */
     function requestImageAnalysis(postInfo) {
-        // ApiRequestManager를 사용하여 중복 요청 방지
-        const apiManager = window.getApiRequestManager();
-
-        return apiManager.requestImageAnalysis(
-            postInfo.postNo,
-            () => {
-                // 실제 분석 요청 로직
-                return Promise.race([
-                    new Promise((resolve, reject) => {
-                        chrome.runtime.sendMessage(
-                            {
-                                type:    'ANALYZE_IMAGE',
-                                postNo:  postInfo.postNo,
-                                postUrl: postInfo.postUrl
-                            },
-                            (response) => {
-                                if (chrome.runtime.lastError) {
-                                    reject(new Error(chrome.runtime.lastError.message));
-                                    return;
-                                }
-
-                                // status가 있으면 정상 응답으로 처리 (error가 있어도)
-                                // 예: status='unchecked', error='이미지를 찾을 수 없습니다'
-                                if (response && response.status) {
-                                    resolve(response);
-                                    return;
-                                }
-
-                                // status도 없고 error만 있으면 실제 에러
-                                if (response && response.error) {
-                                    reject(new Error(response.error));
-                                    return;
-                                }
-
-                                resolve(response);
-                            }
-                        );
-                    }),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('분석 요청 타임아웃 (30초)')), 30000))
-                ]);
-            },
-            300  // 300ms debounce
-        );
+        const key = window.KasDecision.cacheKey(postInfo.postNo, postInfo.postUrl, currentSettings);
+        return window.getApiRequestManager().requestImageAnalysis('analysis:' + key, () =>
+            sendMessageWithTimeout({ type: 'ANALYZE_IMAGE', postNo: postInfo.postNo, postUrl: postInfo.postUrl, userInitiated: postInfo.userInitiated === true }, 31000), 300);
     }
 
     /**
@@ -1791,45 +1693,12 @@
      * @returns {Promise<object>}
      */
     function requestAIVerification(postInfo, imageUrl) {
-        // ApiRequestManager를 사용하여 중복 요청 방지 (AI 검증은 500ms debounce)
-        const apiManager = window.getApiRequestManager();
-
-        return apiManager.requestAIVerification(
-            postInfo.postNo,
-            () => {
-                // 실제 AI 검증 요청 로직
-                return Promise.race([
-                    new Promise((resolve, reject) => {
-                        chrome.runtime.sendMessage(
-                            {
-                                type:     'VERIFY_WITH_AI',
-                                postNo:   postInfo.postNo,
-                                postUrl:  postInfo.postUrl,
-                                imageUrl: imageUrl  // 이미지 URL 직접 전달
-                            },
-                            (response) => {
-                                if (chrome.runtime.lastError) {
-                                    reject(new Error(chrome.runtime.lastError.message));
-                                    return;
-                                }
-
-                                if (response && response.error) {
-                                    reject(new Error(response.error));
-                                    return;
-                                }
-
-                                resolve(response);
-                            }
-                        );
-                    }),
-                    // AI 검증은 30초 타임아웃 (이미지 분석보다 오래 걸릴 수 있음)
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('AI 검증 타임아웃 (30초)')), 30000)
-                    )
-                ]);
-            },
-            500  // 500ms debounce (사용자가 버튼을 여러 번 클릭할 수 있음)
-        );
+        const key = window.KasDecision.cacheKey(postInfo.postNo, postInfo.postUrl, currentSettings);
+        return window.getApiRequestManager().requestAIVerification('ai:' + key, async () => {
+            const response = await sendMessageWithTimeout({ type: 'VERIFY_WITH_AI', postUrl: postInfo.postUrl, imageUrl }, 61000);
+            if (response.error) throw new Error(response.error);
+            return response;
+        }, 500);
     }
 
     /**
@@ -1840,9 +1709,9 @@
         const { apis } = currentSettings;
 
         return (
-            (apis.gpt4oMini?.enabled && apis.gpt4oMini?.apiKey) ||
-            (apis.claudeHaiku?.enabled && apis.claudeHaiku?.apiKey) ||
-            (apis.geminiFlash?.enabled && apis.geminiFlash?.apiKey)
+            (apis.gpt4oMini?.enabled && (apis.gpt4oMini?.apiKey || apis.gpt4oMini?.hasApiKey)) ||
+            (apis.claudeHaiku?.enabled && (apis.claudeHaiku?.apiKey || apis.claudeHaiku?.hasApiKey)) ||
+            (apis.geminiFlash?.enabled && (apis.geminiFlash?.apiKey || apis.geminiFlash?.hasApiKey))
         );
     }
 
@@ -1861,22 +1730,15 @@
             return;
         }
 
-        /** status가 unchecked인 경우 (이미지 없음 등) */
-        if (result.status === SIGNAL_STATUS.UNCHECKED || result.status === 'unchecked') {
-            updateSignalStatus(signal, SIGNAL_STATUS.UNCHECKED, result);
+        const decision = window.KasDecision.displayDecision(result, currentSettings);
+        const status = decision.status;
+        result.adjustedRiskScore = decision.riskScore;
+        result.originalRiskScore = result.riskScore;
+        result.status = status;
+        if (['error', 'unchecked', 'deferred', 'cancelled'].includes(status)) {
+            updateSignalStatus(signal, status, result);
             return;
         }
-
-        /** 사용자 민감도 적용 */
-        const adjustedRiskScore = applyUserSensitivity(result, currentSettings.sensitivity);
-
-        /** 조정된 점수로 신호등 판정 (AI 검증 결과도 민감도 적용) */
-        const status = determineSignalStatus(adjustedRiskScore);
-
-        /** 조정된 점수를 result에 반영 */
-        result.adjustedRiskScore = adjustedRiskScore;
-        result.originalRiskScore = result.riskScore;
-        result.status = status;  // 민감도가 적용된 status로 갱신
 
         updateSignalStatus(signal, status, result);
 
@@ -2035,129 +1897,7 @@
      * @returns {number} 조정된 위험 점수 (0.0 ~ 1.0)
      */
     function applyUserSensitivity(result, userSensitivity) {
-        // ========================================
-        // 1단계: 카테고리별 점수 가져오기
-        // ========================================
-        // categories 또는 detailedScores (AI 응답 형식 차이)
-        const categories = result.categories || result.detailedScores;
-
-        // 카테고리 데이터가 없으면 원본 점수 반환
-        if (!categories || typeof categories !== 'object') {
-            return result.riskScore || 0;
-        }
-
-        // ========================================
-        // 2단계: 기본 민감도 정의
-        // ========================================
-        // constants.js의 DEFAULT_SETTINGS와 동일
-        // 각 카테고리의 기준 민감도 (중간 값)
-        const defaultSensitivity = {
-            gore:           0.8,  // 고어: 높은 기본 민감도
-            violence:       0.8,  // 폭력: 높은 기본 민감도
-            death:          0.8,  // 죽음: 높은 기본 민감도
-            disturbing:     0.8,  // 혐오: 높은 기본 민감도
-            insects:        0.7,  // 벌레: 중간 기본 민감도
-            medical:        0.7,  // 의료: 중간 기본 민감도
-            shock:          0.7,  // 충격: 중간 기본 민감도
-            animal_cruelty: 0.8,  // 동물학대: 높은 기본 민감도
-            nsfw_porn:      0.3,  // 성인물: 낮은 기본 민감도
-            nsfw_sexy:      0.2   // 선정성: 매우 낮은 기본 민감도
-        };
-
-        // ========================================
-        // 3단계: 카테고리별 가중치 정의
-        // ========================================
-        // 위험도 판정에서 각 카테고리의 중요도
-        // 높을수록 최종 점수에 큰 영향
-        const weights = {
-            gore:           1.0,  // 고어: 최고 중요도
-            violence:       1.0,  // 폭력: 최고 중요도
-            death:          1.0,  // 죽음: 최고 중요도
-            disturbing:     0.9,  // 혐오: 높은 중요도
-            insects:        0.8,  // 벌레: 중간 중요도
-            medical:        0.9,  // 의료: 높은 중요도
-            shock:          0.8,  // 충격: 중간 중요도
-            animal_cruelty: 1.0,  // 동물학대: 최고 중요도
-            nsfw_porn:      0.5,  // 성인물: 낮은 중요도
-            nsfw_sexy:      0.3   // 선정성: 매우 낮은 중요도
-        };
-
-        // ========================================
-        // 4단계: 가중 평균 계산 (Weighted Average)
-        // ========================================
-        // 각 카테고리의 조정된 점수 × 가중치를 모두 더함
-        let weightedSum = 0;   // 가중치 적용 점수 합계
-        let totalWeight = 0;   // 전체 가중치 합계
-
-        // ========================================
-        // 5단계: 카테고리 순회 및 점수 조정
-        // ========================================
-        // Object.entries(): 객체를 [키, 값] 배열로 변환
-        // 예: { gore: 0.5, violence: 0.3 }
-        //  → [['gore', 0.5], ['violence', 0.3]]
-        for (const [category, score] of Object.entries(categories)) {
-            // 점수가 숫자가 아니면 스킵 (잘못된 데이터)
-            if (typeof score !== 'number') continue;
-
-            // 점수가 0 이하이면 스킵
-            // ─ 이유: zero 카테고리가 totalWeight에 포함되면 비율 희석이 발생함
-            // ─ 예: gore=1.0, 나머지 9개=0 → totalWeight=8.2 → adjustedRiskScore=0.12 (SAFE 오판)
-            // ─ zero 카테고리는 weightedSum에도 0 기여하므로 totalWeight 포함도 불필요
-            if (score <= 0) continue;
-
-            // ========================================
-            // 각 카테고리별 계산
-            // ========================================
-            const weight      = weights[category] || 0;                    // 가중치
-
-            // 알 수 없는 카테고리(weight=0)는 가중 평균에서 제외
-            if (weight === 0) continue;
-            const defaultSens = defaultSensitivity[category] || 1.0;       // 기본 민감도
-            const userSens    = userSensitivity[category] || defaultSens;  // 사용자 민감도
-
-            // ========================================
-            // 민감도 비율 계산
-            // ========================================
-            // sensitivityRatio = userSens / defaultSens
-            //
-            // 예시 1: 사용자가 고어에 더 민감함
-            // - userSens = 1.0, defaultSens = 0.8
-            // - ratio = 1.0 / 0.8 = 1.25
-            // - 점수 25% 증가
-            //
-            // 예시 2: 사용자가 고어에 덜 민감함
-            // - userSens = 0.5, defaultSens = 0.8
-            // - ratio = 0.5 / 0.8 = 0.625
-            // - 점수 37.5% 감소
-            const sensitivityRatio = userSens / defaultSens;
-
-            // ========================================
-            // 조정된 점수 계산
-            // ========================================
-            // adjustedScore = score × sensitivityRatio
-            // Math.min(1.0, ...): 최대 1.0으로 제한 (100% 초과 방지)
-            const adjustedScore = Math.min(1.0, score * sensitivityRatio);
-
-            // ========================================
-            // 가중치 적용 및 합산
-            // ========================================
-            // weightedSum += adjustedScore × weight
-            // 예: gore (0.625 × 1.0) + violence (0.2 × 1.0) + ...
-            weightedSum += adjustedScore * weight;
-            totalWeight += weight;
-        }
-
-        // ========================================
-        // 6단계: 최종 점수 반환 (가중 평균)
-        // ========================================
-        // 가중 평균 = weightedSum / totalWeight
-        //
-        // 예시:
-        // - weightedSum = 0.625 + 0.2 + 0.1 = 0.925
-        // - totalWeight = 1.0 + 1.0 + 0.9 = 2.9
-        // - 최종 점수 = 0.925 / 2.9 = 0.319 (약 32%)
-        //   → safe (< 0.3) 경계선 (사용자 민감도에 따라 caution이 될 수도)
-        return totalWeight > 0 ? weightedSum / totalWeight : 0;
+        return window.KasDecision.sensitivityScore(result, userSensitivity);
     }
 
     /**
@@ -2278,7 +2018,7 @@
         const riskScore = result.adjustedRiskScore !== undefined ? result.adjustedRiskScore : result.riskScore;
         const riskPercent = Math.round((riskScore || 0) * 100);
 
-        let content = `<div class="kas-tooltip__title">${SIGNAL_LABELS[status] || '알 수 없음'} (위험도: ${riskPercent}%)</div>`;
+        let content = `<div class="kas-tooltip__title">${SIGNAL_LABELS[status] || '알 수 없음'}${result.scoreKind === 'severity' || riskScore == null ? '' : ` (판정 점수: ${riskPercent}%)`}</div>`;
 
         /** detailedScores가 있으면 10개 카테고리 표시 */
         if (result.detailedScores) {
@@ -2655,80 +2395,12 @@
      * - CPU 사용량: 거의 없음 (< 0.1%)
      */
     function startPeriodicCheck() {
-        // ========================================
-        // setInterval 등록 (0.1초마다 실행)
-        // ========================================
-        // window.periodicCheckIntervalId:
-        // - 타이머 ID를 전역 변수에 저장
-        // - 페이지 언로드 시 clearInterval() 호출
-        window.periodicCheckIntervalId = setInterval(() => {
-            // ========================================
-            // 확장 비활성화 확인
-            // ========================================
-            if (!currentSettings.enabled) {
-                return;  // 확장 꺼져있으면 체크 안 함
-            }
-
-            // ========================================
-            // 게시글 목록 가져오기
-            // ========================================
-            // onlyWithThumbnail 설정에 따라 필터링
-            const rows = currentSettings.onlyWithThumbnail
-                ? window.dcParser.getPostRowsWithImage()   // 썸네일 있는 게시글만
-                : window.dcParser.getAllPostRows();         // 모든 게시글
-
-            // ========================================
-            // 최적화: 첫 번째 게시글만 샘플링
-            // ========================================
-            // DCRefresher가 DOM을 교체하면 모든 신호등이 사라지므로
-            // 하나만 체크해도 전체 상태를 알 수 있음
-            //
-            // 예시:
-            // - 100개 게시글 중 첫 번째만 체크
-            // - 시간 복잡도: O(100) → O(1)
-            // - 0.1초마다 실행되어도 CPU 부담 거의 없음
-            for (const row of rows) {
-                // ========================================
-                // 게시글 정보 파싱
-                // ========================================
-                const postInfo = window.dcParser.parsePostRow(row);
-                if (!postInfo || !postInfo.hasImage) {
-                    continue;  // 파싱 실패(삭제글 등) 또는 이미지 없으면 스킵
-                }
-
-                // ========================================
-                // 신호등 존재 여부 확인
-                // ========================================
-                // hasSignal(): 신호등이 있는지 확인
-                // 없으면 DOM이 교체된 것 (DCRefresher 또는 다른 원인)
-                if (!window.dcParser.hasSignal(row)) {
-                    debugLog('신호등 사라짐 감지, 전체 재처리 시작');
-
-                    // ========================================
-                    // 즉시 캐시 복원 (동기, 깜빡임 없음)
-                    // ========================================
-                    // processPostList(true): 캐시만 즉시 복원
-                    // 사용자는 즉시 신호등을 볼 수 있음
-                    processPostList(true);
-
-                    // ========================================
-                    // 미분석 게시글은 나중에 (비동기)
-                    // ========================================
-                    // 100ms 후 전체 분석 시작
-                    setTimeout(() => {
-                        processPostList(false);
-                    }, 100);
-                }
-
-                // ========================================
-                // 첫 번째 게시글만 체크하고 즉시 종료
-                // ========================================
-                // break: for 루프 탈출
-                // 시간 복잡도: O(n) → O(1)
-                // 100개 게시글 중 1개만 체크하므로 100배 빠름
-                break;
-            }
-        }, 100);  // 0.1초 = 100ms
+        const timer = setInterval(() => {
+            if (document.hidden || !currentSettings?.enabled) return;
+            const first = window.dcParser.getAllPostRows()[0];
+            if (first && !window.dcParser.hasSignal(first)) processPostList(false);
+        }, 1000);
+        activeTimers.add(timer);
     }
 
     /**
@@ -2750,6 +2422,11 @@
 
         if (message.type === 'SETTINGS_UPDATED') {
             const prevReplaceAll = currentSettings.replaceAllImages;
+            settingsGeneration++;
+            chrome.runtime.sendMessage({ type: 'CANCEL_DC_REQUESTS' }).catch(() => {});
+            analyzedPosts.clear(); postContentCache.clear();
+            for (const img of document.querySelectorAll('.writing_view_box img')) { delete img.dataset.kasCheckedSrc; delete img.dataset.kasChecked; }
+            viewImagesChanged = true;
             currentSettings      = message.settings;
             if (currentSettings.enabled) {
                 /** replaceAllImages 변경 처리 — 상세 페이지에만 적용 */
@@ -2832,11 +2509,9 @@
         // 화이트리스트 등록 사유 입력 요청
         if (message.type === 'GET_WHITELIST_REASON') {
             let imageUrl = message.imageUrl;
-            console.log('[Kas-Free Content] 화이트리스트 요청 받음, imageUrl:', imageUrl);
 
             // placeholder 이미지인 경우 원본 URL 찾기
-            if (imageUrl && imageUrl.includes('placeholder.jpg')) {
-                console.log('[Kas-Free Content] placeholder 이미지 감지, 원본 URL 찾기 시작');
+            if (imageUrl && imageUrl.includes('icons/placeholder.svg')) {
                 const replacedImages = document.querySelectorAll('.kas-replaced-image[data-kas-replaced="true"]');
                 console.log('[Kas-Free Content] 대체된 이미지 개수:', replacedImages.length);
 
@@ -2848,7 +2523,6 @@
 
                     if (img.src === imageUrl && img.dataset.kasOriginalSrc) {
                         imageUrl = img.dataset.kasOriginalSrc;
-                        console.log('[Kas-Free Content] 원본 URL 찾음:', imageUrl);
                         break;
                     }
                 }
@@ -2953,49 +2627,7 @@
      * @returns {Promise<object>} { type, imageUrl, extraction?, mimeType }
      */
     async function processImageForReport(imageUrl) {
-        console.log('[Kas-Free] 이미지 처리 시작 (Content Script):', imageUrl);
-
-        /**
-         * GIF 여부 확인
-         * - GIF: 첫 프레임 추출 필요 (Canvas)
-         * - 일반 이미지(JPEG, PNG): URL만 전송 (서버가 다운로드)
-         */
-        const isGif = imageUrl.toLowerCase().includes('.gif') ||
-                      imageUrl.toLowerCase().includes('image/gif');
-
-        if (isGif) {
-            // GIF → Canvas로 첫 프레임 추출 시도
-            try {
-                const extractedBase64 = await extractImageToBase64(imageUrl);
-
-                return {
-                    type: 'extraction',
-                    imageUrl: imageUrl,
-                    extraction: extractedBase64.includes(',')
-                        ? extractedBase64.split(',')[1]
-                        : extractedBase64,
-                    mimeType: 'image/jpeg'
-                };
-            } catch (error) {
-                console.warn('[Kas-Free] GIF 프레임 추출 실패, Service Worker로 폴백:', error.message);
-
-                // GIF 추출 실패 → Service Worker에서 재시도
-                return {
-                    type: 'url',
-                    imageUrl: imageUrl,
-                    mimeType: 'image/gif'
-                };
-            }
-        } else {
-            // 일반 이미지 → URL만 전송 (서버가 다운로드)
-            console.log('[Kas-Free] 일반 이미지, URL만 전송');
-
-            return {
-                type: 'url',
-                imageUrl: imageUrl,
-                mimeType: 'image/jpeg'  // 추정값
-            };
-        }
+        return { type: 'url', imageUrl };
     }
 
     /**
@@ -3151,65 +2783,13 @@
      * @param {string} imageUrl - 이미지 URL
      * @returns {Promise<string>} Base64 Data URL
      */
-    async function extractImageToBase64(imageUrl) {
-        return new Promise((resolve, reject) => {
-            const img = new Image();
-
-            /**
-             * DC 이미지 서버 CORS 우회 전략:
-             * 1. crossOrigin 설정을 제거하여 Same-Origin으로 처리
-             * 2. DC는 Referer 체크를 하므로 현재 페이지에서 로드하면 통과 가능
-             * 3. Canvas taint 발생 시 URL로 폴백
-             */
-            // crossOrigin 설정 제거 (DC 서버는 CORS를 엄격하게 차단)
-
-            img.onload = () => {
-                try {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.naturalWidth || img.width;
-                    canvas.height = img.naturalHeight || img.height;
-
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-
-                    /**
-                     * toDataURL 호출 시 Canvas가 tainted 상태면 SecurityError 발생
-                     * 이 경우 catch 블록으로 이동하여 폴백 처리
-                     */
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-
-                    console.log('[Kas-Free] 이미지 추출 완료 (Content Script):', {
-                        width: canvas.width,
-                        height: canvas.height,
-                        size: Math.round(dataUrl.length / 1024) + 'KB'
-                    });
-
-                    resolve(dataUrl);
-                } catch (error) {
-                    /**
-                     * Canvas tainted 에러 발생 시 URL만 반환
-                     * Service Worker에서 fetch로 재시도하거나 서버에서 처리
-                     */
-                    console.warn('[Kas-Free] Canvas 추출 실패 (tainted), URL로 폴백:', error.message);
-                    reject(new Error('CANVAS_TAINTED'));
-                }
-            };
-
-            img.onerror = (error) => {
-                console.error('[Kas-Free] 이미지 로드 실패:', imageUrl);
-                reject(new Error('IMAGE_LOAD_FAILED'));
-            };
-
-            img.src = imageUrl;
-        });
-    }
 
     /**
      * 보이는 게시글을 선행 분석한다 (Prefetch)
      * @remarks 백그라운드에서 낮은 우선순위로 실행
      */
     async function prefetchVisiblePosts() {
-        if (!currentSettings || !currentSettings.enabled || !currentSettings.autoScan) {
+        if (!currentSettings || !currentSettings.enabled || !currentSettings.autoScan || !currentSettings.prefetchEnabled || document.hidden) {
             return;
         }
 

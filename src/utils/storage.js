@@ -65,7 +65,9 @@ export async function getSettings() {
     const merged = { ...DEFAULT_SETTINGS, ...settings };
 
     // 설정값 검증 및 무결성 확인
-    const validated = validateSettings(merged);
+    let validated;
+    try { validated = validateSettings(merged); }
+    catch { validated = validateSettings({ ...merged, profile: {} }); }
     const safe = ensureSettingsIntegrity(validated);
 
     return safe;

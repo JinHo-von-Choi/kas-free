@@ -37,8 +37,8 @@
 !tests/
 !tests/**
 !package.json
+!package-lock.json
 !babel.config.json
-!jest.e2e.config.js
 
 # Git 설정
 !.gitignore
@@ -52,7 +52,6 @@ IMPROVEMENT_PLAN.md
 USER_GUIDE.md
 *.log
 node_modules/
-package-lock.json
 models/
 kas-free-v*.zip
 placeholder.jpg

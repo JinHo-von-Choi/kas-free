@@ -23,7 +23,7 @@
 
 import { AI_ANALYSIS_PROMPT } from '../utils/constants.js';
 import { AdaptiveTimeoutManager } from './AdaptiveTimeoutManager.js';
-import { validateAndNormalizeAIResponse } from '../utils/aiResponseValidator.js';
+import { validateAIResponse } from '../utils/aiResponseValidator.js';
 
 /**
  * ========================================
@@ -177,6 +177,8 @@ export class ApiClient {
         // - fetch()를 중간에 취소할 수 있게 해주는 객체
         // - controller.abort() 호출하면 fetch가 즉시 중단됨
         const controller = new AbortController();
+        if (options.signal?.aborted) throw new ApiError('요청이 취소됐습니다.', 408, false);
+        options.signal?.addEventListener('abort', () => controller.abort(), { once: true });
 
         // ========================================
         // 타임아웃 상태 플래그 (경합 조건 방지)
@@ -224,7 +226,7 @@ export class ApiClient {
             // signal: controller.signal: abort 시그널 연결
             const response = await fetch(url, {
                 ...options,
-                signal: controller.signal  // 타임아웃 시 자동 중단
+                signal: controller.signal
             });
 
             // ========================================
@@ -282,6 +284,7 @@ export class ApiClient {
             clearTimeout(timeoutId);  // 타이머 정리
 
             // AbortError 또는 timedOut 플래그: 타임아웃으로 중단됨
+            if (options.signal?.aborted) throw new ApiError('요청이 취소됐습니다.', 408, false);
             if (error.name === 'AbortError' || timedOut) {
                 const elapsed = performance.now() - startTime;
                 throw new ApiError(
@@ -330,6 +333,7 @@ export class ApiClient {
         // attempt = 2: 2차 재시도
         // attempt = 3: 3차 재시도 (maxRetries = 3인 경우)
         for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+            if (options.signal?.aborted || Date.now() >= (options.deadline || Infinity)) throw new ApiError('AI 요청이 취소되거나 시간을 초과했습니다.', 408, false);
             try {
                 // ========================================
                 // fetch 시도
@@ -343,7 +347,7 @@ export class ApiClient {
                 if (this.isRetryableStatus(response.status)) {
                     if (attempt < this.maxRetries) {
                         console.warn(`[ApiClient] 재시도 가능한 응답 (${response.status}), 재시도 ${attempt + 1}/${this.maxRetries}`);
-                        await this.delay(this.calculateDelay(attempt));
+                        await this.delay(Math.min(this.calculateDelay(attempt), Math.max(0, (options.deadline || Infinity) - Date.now())), options.signal);
                         continue;  // 다음 루프로 (재시도)
                     }
                 }
@@ -360,7 +364,7 @@ export class ApiClient {
                 // error.retryable이 true인 경우만 재시도
                 if (error instanceof ApiError && error.retryable && attempt < this.maxRetries) {
                     console.warn(`[ApiClient] 재시도 가능한 에러, 재시도 ${attempt + 1}/${this.maxRetries}:`, error.message);
-                    await this.delay(this.calculateDelay(attempt));
+                    await this.delay(Math.min(this.calculateDelay(attempt), Math.max(0, (options.deadline || Infinity) - Date.now())), options.signal);
                     continue;  // 재시도
                 }
 
@@ -371,7 +375,7 @@ export class ApiClient {
                 // 예: 인터넷 끊김, DNS 실패 등
                 if (error.name === 'TypeError' && attempt < this.maxRetries) {
                     console.warn(`[ApiClient] 네트워크 에러, 재시도 ${attempt + 1}/${this.maxRetries}:`, error.message);
-                    await this.delay(this.calculateDelay(attempt));
+                    await this.delay(Math.min(this.calculateDelay(attempt), Math.max(0, (options.deadline || Infinity) - Date.now())), options.signal);
                     continue;  // 재시도
                 }
 
@@ -470,8 +474,13 @@ export class ApiClient {
      * @param {number} ms - 지연 시간 (ms)
      * @returns {Promise<void>} ms 후에 resolve되는 Promise
      */
-    delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+    delay(ms, signal) {
+        return new Promise((resolve, reject) => {
+            if (signal?.aborted) return reject(new ApiError('요청이 취소됐습니다.', 408, false));
+            const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new ApiError('요청이 취소됐습니다.', 408, false)); };
+            const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
+            signal?.addEventListener('abort', abort, { once: true });
+        });
     }
 
     /**
@@ -509,7 +518,7 @@ export class ApiClient {
      * @param {string} imageData - 이미지 데이터 (URL or Base64)
      * @returns {Promise<object>}
      */
-    async callGpt4oMini(apiKey, imageData) {
+    async callGpt4oMini(apiKey, imageData, requestOptions = {}) {
         const requestBody = {
             model: 'gpt-4o-mini',
             messages: [
@@ -531,6 +540,8 @@ export class ApiClient {
 
         const response = await this.fetchWithRetry('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
+                signal: requestOptions.signal,
+                deadline: requestOptions.deadline,
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
@@ -552,7 +563,9 @@ export class ApiClient {
         const aiResponse = JSON.parse(result.choices[0].message.content);
 
         // AI 응답 검증 및 정규화
-        const validation = validateAndNormalizeAIResponse(aiResponse);
+        const validation = validateAIResponse(aiResponse);
+
+        if (!validation.valid) throw new ApiError('AI 응답 형식이 잘못되어 판정을 보류합니다.', 502, false);
 
         if (validation.normalized) {
             console.warn('[ApiClient] GPT-4o-mini 응답 정규화됨:', validation.errors);
@@ -568,7 +581,7 @@ export class ApiClient {
      * @param {boolean} isDcImage - 디시인사이드 이미지 여부
      * @returns {Promise<object>}
      */
-    async callClaudeHaiku(apiKey, imageData, isDcImage) {
+    async callClaudeHaiku(apiKey, imageData, isDcImage, requestOptions = {}) {
         let imageContent;
 
         if (isDcImage) {
@@ -594,6 +607,8 @@ export class ApiClient {
 
         const response = await this.fetchWithRetry('https://api.anthropic.com/v1/messages', {
             method: 'POST',
+                signal: requestOptions.signal,
+                deadline: requestOptions.deadline,
             headers: {
                 'Content-Type': 'application/json',
                 'x-api-key': apiKey,
@@ -627,7 +642,9 @@ export class ApiClient {
         const aiResponse = JSON.parse(result.content[0].text);
 
         // AI 응답 검증 및 정규화
-        const validation = validateAndNormalizeAIResponse(aiResponse);
+        const validation = validateAIResponse(aiResponse);
+
+        if (!validation.valid) throw new ApiError('AI 응답 형식이 잘못되어 판정을 보류합니다.', 502, false);
 
         if (validation.normalized) {
             console.warn('[ApiClient] Claude Haiku 응답 정규화됨:', validation.errors);
@@ -643,7 +660,7 @@ export class ApiClient {
      * @param {boolean} isDcImage - 디시인사이드 이미지 여부
      * @returns {Promise<object>}
      */
-    async callGeminiFlash(apiKey, imageData, isDcImage) {
+    async callGeminiFlash(apiKey, imageData, isDcImage, requestOptions = {}) {
         let imagePart;
 
         if (isDcImage) {
@@ -668,6 +685,8 @@ export class ApiClient {
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
             {
                 method: 'POST',
+                signal: requestOptions.signal,
+                deadline: requestOptions.deadline,
                 headers: {
                     'Content-Type': 'application/json'
                 },
@@ -700,7 +719,9 @@ export class ApiClient {
         const aiResponse = JSON.parse(result.candidates[0].content.parts[0].text);
 
         // AI 응답 검증 및 정규화
-        const validation = validateAndNormalizeAIResponse(aiResponse);
+        const validation = validateAIResponse(aiResponse);
+
+        if (!validation.valid) throw new ApiError('AI 응답 형식이 잘못되어 판정을 보류합니다.', 502, false);
 
         if (validation.normalized) {
             console.warn('[ApiClient] Gemini Flash 응답 정규화됨:', validation.errors);

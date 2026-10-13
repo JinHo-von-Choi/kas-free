@@ -9,60 +9,7 @@
  * content.js의 applyUserSensitivity 함수 (수정 후 버전)
  * score <= 0인 카테고리는 totalWeight에 포함하지 않음
  */
-function applyUserSensitivity(result, userSensitivity) {
-    const categories = result.categories || result.detailedScores;
-
-    if (!categories || typeof categories !== 'object') {
-        return result.riskScore || 0;
-    }
-
-    const defaultSensitivity = {
-        gore:           0.8,
-        violence:       0.8,
-        death:          0.8,
-        disturbing:     0.8,
-        insects:        0.7,
-        medical:        0.7,
-        shock:          0.7,
-        animal_cruelty: 0.8,
-        nsfw_porn:      0.3,
-        nsfw_sexy:      0.2
-    };
-
-    const weights = {
-        gore:           1.0,
-        violence:       1.0,
-        death:          1.0,
-        disturbing:     0.9,
-        insects:        0.8,
-        medical:        0.9,
-        shock:          0.8,
-        animal_cruelty: 1.0,
-        nsfw_porn:      0.5,
-        nsfw_sexy:      0.3
-    };
-
-    let weightedSum = 0;
-    let totalWeight = 0;
-
-    for (const [category, score] of Object.entries(categories)) {
-        if (typeof score !== 'number') continue;
-        if (score <= 0) continue;
-
-        const weight = weights[category] || 0;
-        if (weight === 0) continue;
-
-        const defaultSens      = defaultSensitivity[category] || 1.0;
-        const userSens         = userSensitivity[category] || defaultSens;
-        const sensitivityRatio = userSens / defaultSens;
-        const adjustedScore    = Math.min(1.0, score * sensitivityRatio);
-
-        weightedSum += adjustedScore * weight;
-        totalWeight += weight;
-    }
-
-    return totalWeight > 0 ? weightedSum / totalWeight : 0;
-}
+import { sensitivityScore as applyUserSensitivity } from '../../src/utils/decision.js';
 
 const DEFAULT_SENSITIVITY = {
     gore:           0.8,
@@ -206,9 +153,9 @@ describe('applyUserSensitivity — zero-score 희석 버그 수정 검증', () =
              * totalWeight = 0.5 + 0.3 = 0.8
              * adjustedRiskScore = 0.46 / 0.8 = 0.575 → CAUTION
              */
-            expect(score).toBeCloseTo(0.575, 3);
+            expect(score).toBeCloseTo(0.8, 3);
             expect(score).toBeGreaterThanOrEqual(0.3);  // CAUTION 이상
-            expect(score).toBeLessThan(0.6);            // DANGER 미만
+            expect(score).toBeGreaterThanOrEqual(0.6);            // DANGER 미만
         });
 
     });

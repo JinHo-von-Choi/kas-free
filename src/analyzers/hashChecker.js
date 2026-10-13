@@ -1,3 +1,4 @@
+import { normalizeCheck } from '../utils/decision.js';
 /**
  * 해시 기반 이미지 검사기
  * @author 최진호
@@ -19,7 +20,7 @@ export class HashChecker {
      * @param {string} reporterId - 신고자 ID (필수)
      * @returns {Promise<object>}
      */
-    async check(hashes, threshold = 10, reporterId) {
+    async check(hashes, threshold = 10, reporterId, options = {}) {
         try {
             if (!reporterId) {
                 throw new Error('reporterId는 필수 파라미터입니다');
@@ -30,7 +31,9 @@ export class HashChecker {
                 dhash:      hashes.dhash,
                 ahash:      hashes.ahash,
                 threshold:  threshold,
-                reporterId: reporterId
+                reporterId: reporterId,
+                profile: options.profile,
+                pageUrl: options.pageUrl
             };
 
             const headers = { 'Content-Type': 'application/json' };
@@ -41,6 +44,7 @@ export class HashChecker {
             const response = await fetch(`${this.serverUrl}/api/check/hash`, {
                 method: 'POST',
                 headers,
+                signal: options.signal,
                 body: JSON.stringify(requestBody)
             });
 
@@ -68,51 +72,7 @@ export class HashChecker {
      * @returns {object}
      */
     transformResult(data) {
-        const { matched, matchType, distance, image } = data;
-
-        const baseCategories = {
-            gore:           0,
-            violence:       0,
-            death:          0,
-            disturbing:     0,
-            insects:        0,
-            medical:        0,
-            shock:          0,
-            animal_cruelty: 0,
-            nsfw_porn:      0,
-            nsfw_sexy:      0
-        };
-
-        if (!matched) {
-            // 매칭되지 않음 = 안전
-            return {
-                riskScore:      0,
-                detailedScores: baseCategories,
-                categories:     baseCategories,
-                source:         'hash-db',
-                matched:        false,
-                bloomFiltered:  data.bloomFiltered || false
-            };
-        }
-
-        // 매칭됨 = 위험
-        // severity를 riskScore로 변환 (1-5 → 0.0-1.0)
-        const severity   = image?.severity || 5;
-        const riskScore  = severity / 5;
-        const categoryId = image?.category || 1;
-        const categories = this.mapCategoryToScores(categoryId, severity);
-
-        return {
-            riskScore:      riskScore,
-            detailedScores: categories,
-            categories:     categories,
-            source:         'hash-db',
-            matched:        true,
-            matchType:      matchType,
-            distance:       distance,
-            imageId:        image?.id,
-            severity:       severity
-        };
+        return normalizeCheck(data, 'hash-db');
     }
 
     /**

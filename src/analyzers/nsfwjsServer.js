@@ -1,3 +1,4 @@
+import { normalizeCheck } from '../utils/decision.js';
 /**
  * NSFW.js 서버 분석기
  * @author 최진호
@@ -77,7 +78,7 @@ export class NsfwjsServerAnalyzer {
      * @param {string} reporterId - 신고자 ID (필수)
      * @returns {Promise<object>}
      */
-    async check(base64Image, reporterId) {
+    async check(base64Image, reporterId, options = {}) {
         try {
             if (!reporterId) {
                 throw new Error('reporterId는 필수 파라미터입니다');
@@ -89,12 +90,15 @@ export class NsfwjsServerAnalyzer {
 
             const requestBody = {
                 image:      imageData,
-                reporterId: reporterId
+                reporterId: reporterId,
+                profile: options.profile,
+                pageUrl: options.pageUrl
             };
 
             const response = await fetch(`${this.serverUrl}/api/check`, {
                 method:  'POST',
                 headers: this._buildHeaders(),
+                signal: options.signal,
                 body:    JSON.stringify(requestBody)
             });
 
@@ -122,49 +126,7 @@ export class NsfwjsServerAnalyzer {
      * @returns {object}
      */
     transformCheckResult(data) {
-        const { matched, matchType, distance, image, hashes } = data;
-
-        const baseCategories = {
-            gore:           0,
-            violence:       0,
-            death:          0,
-            disturbing:     0,
-            insects:        0,
-            medical:        0,
-            shock:          0,
-            animal_cruelty: 0,
-            nsfw_porn:      0,
-            nsfw_sexy:      0
-        };
-
-        if (!matched) {
-            return {
-                riskScore:      0,
-                detailedScores: baseCategories,
-                categories:     baseCategories,
-                source:         'nsfw-server-check',
-                matched:        false,
-                hashes:         hashes
-            };
-        }
-
-        const severity   = image?.severity || 5;
-        const riskScore  = severity / 5;
-        const categoryId = image?.category || 1;
-        const categories = this.mapCategoryToScores(categoryId, severity);
-
-        return {
-            riskScore:      riskScore,
-            detailedScores: categories,
-            categories:     categories,
-            source:         'nsfw-server-check',
-            matched:        true,
-            matchType:      matchType,
-            distance:       distance,
-            imageId:        image?.id,
-            severity:       severity,
-            hashes:         hashes
-        };
+        return normalizeCheck(data, 'nsfw-server-check');
     }
 
     /**
@@ -300,30 +262,19 @@ export class NsfwjsServerAnalyzer {
                 requestBody.provider = provider;
             }
 
-            console.log('[Kas-Free] /api/report/v2 요청 body:', {
-                imageUrl: requestBody.imageUrl,
-                category: requestBody.category,
-                reporterId: requestBody.reporterId,
-                pageUrl: requestBody.pageUrl,
-                reason: requestBody.reason,
-                analysis: requestBody.analysis,
-                provider: requestBody.provider
-            });
+
 
             const response = await fetch(`${this.serverUrl}/api/report/v2`, {
                 method:  'POST',
                 headers: this._buildHeaders(),
+                signal: params.signal,
                 body:    JSON.stringify(requestBody)
             });
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
 
-                console.error('[Kas-Free] /api/report/v2 오류 상세:', {
-                    status: response.status,
-                    errorData: errorData,
-                    requestBody: requestBody
-                });
+                console.error('[Kas-Free] 신고 서버 응답 상태:', response.status);
 
                 // 403 차단 응답 처리
                 if (response.status === 403) {

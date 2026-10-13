@@ -42,7 +42,7 @@ export class AIVerificationHandler {
      * @param {function} getOrCreateReporterId - reporterId 생성 함수
      * @returns {Promise<object>}
      */
-    async handleVerification(message, fetchPostImage, getOrCreateReporterId) {
+    async handleVerification(message, fetchPostImage, getOrCreateReporterId, context = {}) {
         const { postUrl, imageUrl: providedImageUrl } = message;
 
         if (!this.settings.enabled) {
@@ -53,14 +53,12 @@ export class AIVerificationHandler {
         }
 
         try {
-            console.log('[AIVerification] AI 검증 요청:', { postUrl, providedImageUrl });
 
             // 이미지 URL 확인
             let imageUrl = providedImageUrl;
 
             if (!imageUrl) {
-                console.log('[AIVerification] 이미지 URL 누락, 게시글에서 추출 시도');
-                imageUrl = await fetchPostImage(postUrl);
+                imageUrl = await fetchPostImage(postUrl, context);
             }
 
             if (!imageUrl) {
@@ -86,12 +84,12 @@ export class AIVerificationHandler {
                 };
             }
 
-            console.log('[AIVerification] AI 검증 시작:', { imageUrl, api: enabledApi.name });
 
             // AI 분석
-            const analysis = await this.analyzeWithAI(imageUrl, enabledApi);
+            const analysis = await this.analyzeWithAI(imageUrl, enabledApi, context);
 
-            console.log('[AIVerification] AI 분석 완료:', analysis);
+
+            if (context.signal?.aborted || Date.now() >= (context.deadline || Infinity)) throw new Error('AI 검증이 취소됐습니다.');
 
             // 유해 이미지 처리
             if (analysis.is_harmful) {
@@ -100,7 +98,8 @@ export class AIVerificationHandler {
                     analysis,
                     postUrl,
                     enabledApi,
-                    getOrCreateReporterId
+                    getOrCreateReporterId,
+                    context
                 );
             } else {
                 return this.handleSafeImage(analysis);
@@ -141,14 +140,13 @@ export class AIVerificationHandler {
      * @param {object} apiConfig - API 설정
      * @returns {Promise<object>}
      */
-    async analyzeWithAI(imageUrl, apiConfig) {
+    async analyzeWithAI(imageUrl, apiConfig, context = {}) {
         const isDcImage = imageUrl.includes('dcinside') || imageUrl.includes('dcimg');
         let imageData;
 
         // 디시인사이드 이미지는 Base64 변환 필요
         if (isDcImage) {
-            console.log('[AIVerification] 디시인사이드 이미지 감지, Base64 변환');
-            const base64 = await imageUrlToBase64(imageUrl);
+            const base64 = await imageUrlToBase64(imageUrl, false, context);
             imageData = `data:image/jpeg;base64,${base64}`;
         } else {
             imageData = imageUrl;
@@ -157,11 +155,11 @@ export class AIVerificationHandler {
         // API 호출
         try {
             if (apiConfig.name === 'gpt4oMini') {
-                return await this.apiClient.callGpt4oMini(apiConfig.apiKey, imageData);
+                return await this.apiClient.callGpt4oMini(apiConfig.apiKey, imageData, context);
             } else if (apiConfig.name === 'claudeHaiku') {
-                return await this.apiClient.callClaudeHaiku(apiConfig.apiKey, imageData, isDcImage);
+                return await this.apiClient.callClaudeHaiku(apiConfig.apiKey, imageData, isDcImage, context);
             } else if (apiConfig.name === 'geminiFlash') {
-                return await this.apiClient.callGeminiFlash(apiConfig.apiKey, imageData, isDcImage);
+                return await this.apiClient.callGeminiFlash(apiConfig.apiKey, imageData, isDcImage, context);
             }
 
             throw new Error(`지원하지 않는 API: ${apiConfig.name}`);
@@ -185,22 +183,20 @@ export class AIVerificationHandler {
      * @param {function} getOrCreateReporterId - reporterId 생성 함수
      * @returns {Promise<object>}
      */
-    async handleHarmfulImage(imageUrl, analysis, postUrl, apiConfig, getOrCreateReporterId) {
-        console.log('[AIVerification] ✅ 유해 이미지 감지!');
-        console.log('[AIVerification] - 카테고리:', this.getTopCategory(analysis.scores));
-        console.log('[AIVerification] - 점수:', analysis.scores);
+    async handleHarmfulImage(imageUrl, analysis, postUrl, apiConfig, getOrCreateReporterId, context = {}) {
 
         let reportSuccess = false;
         let reportError = null;
 
         // 서버 신고 시도
         try {
-            console.log('[AIVerification] 서버 신고 시작...');
 
             const reporterId = await getOrCreateReporterId();
+            if (context.signal?.aborted || Date.now() >= (context.deadline || Infinity)) throw new Error('신고 요청이 취소됐습니다.');
             const category = this.getTopCategory(analysis.scores);
 
             const reportResult = await this.nsfwServer.reportV2({
+                signal: context.signal,
                 imageUrl: imageUrl,
                 analysis: analysis,
                 category: category,
@@ -214,7 +210,6 @@ export class AIVerificationHandler {
             });
 
             reportSuccess = true;
-            console.log('[AIVerification] ✅ 서버 신고 완료:', reportResult);
         } catch (error) {
             reportError = error.message;
             console.error('[AIVerification] ❌ 서버 신고 실패 (AI 결과는 반환):', error);
@@ -222,7 +217,7 @@ export class AIVerificationHandler {
 
         return {
             status: 'danger',
-            riskScore: analysis.final_score || 0.9,
+            riskScore: analysis.final_score ?? 0.9,
             categories: analysis.scores,
             source: 'client-ai',
             aiAnalysis: analysis,
@@ -237,11 +232,10 @@ export class AIVerificationHandler {
      * @returns {object}
      */
     handleSafeImage(analysis) {
-        console.log('[AIVerification] ✅ 안전 이미지 판정');
 
         return {
             status: 'safe',
-            riskScore: analysis.final_score || 0.1,
+            riskScore: analysis.final_score ?? 0.1,
             categories: analysis.scores,
             source: 'client-ai',
             aiAnalysis: analysis
@@ -274,6 +268,7 @@ export class AIVerificationHandler {
         }
 
         if (apis.geminiFlash?.enabled && apis.geminiFlash?.apiKey) {
+            throw new Error('Gemini 1.5 Flash 지원이 종료됐습니다. 다른 설정된 AI를 선택하세요.');
             return {
                 name: 'geminiFlash',
                 apiKey: apis.geminiFlash.apiKey,

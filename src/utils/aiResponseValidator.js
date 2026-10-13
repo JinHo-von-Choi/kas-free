@@ -71,7 +71,7 @@ export function validateAIResponse(response) {
             } else {
                 // 2-2. 점수 범위 검증 (0-1)
                 const score = response.scores[category];
-                if (typeof score !== 'number' || score < 0 || score > 1) {
+                if (!Number.isFinite(score) || score < 0 || score > 1) {
                     errors.push(`scores.${category}는 0-1 범위의 숫자여야 합니다. (현재: ${score})`);
                 }
             }
@@ -101,7 +101,7 @@ export function validateAIResponse(response) {
     }
 
     // 6. final_score 필드 검증 (0-1)
-    if (typeof response.final_score !== 'number' ||
+    if (!Number.isFinite(response.final_score) ||
         response.final_score < 0 ||
         response.final_score > 1) {
         errors.push(
