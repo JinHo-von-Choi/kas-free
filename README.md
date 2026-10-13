@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icons/icon128.png" alt="카-스 프리 로고" width="128" height="128">
+</p>
+
 # 카-스 프리 (Kas-Free)
 
 디시인사이드 게시글의 이미지를 검사하고 위험·주의·미확인 상태를 표시하는 Chrome Manifest V3 확장 프로그램입니다. 알려진 이미지 해시를 NSFWserver에서 조회하고, 사용자 선택에 따라 서버 이미지 검사 또는 직접 설정한 AI 제공자의 재검증을 사용합니다.
